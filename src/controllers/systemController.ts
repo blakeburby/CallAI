@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { summarizeForVoice } from "../services/openaiService.js";
 import { getSystemStatus } from "../services/tradingService.js";
 import { logger } from "../utils/logger.js";
+import { sendToolPayload } from "../utils/vapiTooling.js";
 
 const ERROR_MESSAGE = "I ran into an issue processing that request.";
 
@@ -13,11 +14,15 @@ const sendToolError = (
   const message = error instanceof Error ? error.message : "Unknown error";
   logger.error(`Tool execution failed: ${toolName}`, { error: message });
 
-  response.status(500).json({
-    success: false,
-    error: message,
-    message: ERROR_MESSAGE
-  });
+  sendToolPayload(
+    response,
+    {
+      success: false,
+      error: message,
+      message: ERROR_MESSAGE
+    },
+    500
+  );
 };
 
 export const getStatus = async (
@@ -28,7 +33,7 @@ export const getStatus = async (
     const data = await getSystemStatus();
     const message = await summarizeForVoice("system_status", data);
 
-    response.json({
+    sendToolPayload(response, {
       success: true,
       data,
       message

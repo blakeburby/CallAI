@@ -31,24 +31,24 @@ toolsRouter.use(requireApiKey);
 
 toolsRouter.post(
   "/tools/run-arbitrage-scan",
-  validateBody(runArbitrageScanSchema),
+  validateBody(runArbitrageScanSchema, "run_arbitrage_scan"),
   runArbitrageScan
 );
 
 toolsRouter.post(
   "/tools/get-open-positions",
-  validateBody(emptyBodySchema),
+  validateBody(emptyBodySchema, "get_open_positions"),
   getOpenPositions
 );
 
 toolsRouter.post(
   "/tools/place-trade",
-  validateBody(placeTradeSchema),
+  validateBody(placeTradeSchema, "place_trade"),
   executeTrade
 );
 
 toolsRouter.post(
   "/tools/system-status",
-  validateBody(emptyBodySchema),
+  validateBody(emptyBodySchema, "system_status"),
   getStatus
 );

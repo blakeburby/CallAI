@@ -6,6 +6,7 @@ import {
   runScan
 } from "../services/tradingService.js";
 import { logger } from "../utils/logger.js";
+import { sendToolPayload } from "../utils/vapiTooling.js";
 
 const ERROR_MESSAGE = "I ran into an issue processing that request.";
 
@@ -27,11 +28,15 @@ const sendToolError = (
   const message = error instanceof Error ? error.message : "Unknown error";
   logger.error(`Tool execution failed: ${toolName}`, { error: message });
 
-  response.status(500).json({
-    success: false,
-    error: message,
-    message: ERROR_MESSAGE
-  });
+  sendToolPayload(
+    response,
+    {
+      success: false,
+      error: message,
+      message: ERROR_MESSAGE
+    },
+    500
+  );
 };
 
 export const runArbitrageScan = async (
@@ -42,7 +47,7 @@ export const runArbitrageScan = async (
     const data = await runScan(request.body.min_ev);
     const message = await summarizeForVoice("run_arbitrage_scan", data);
 
-    response.json({
+    sendToolPayload(response, {
       success: true,
       data,
       message
@@ -60,7 +65,7 @@ export const getOpenPositions = async (
     const data = await getPositions();
     const message = await summarizeForVoice("get_open_positions", data);
 
-    response.json({
+    sendToolPayload(response, {
       success: true,
       data,
       message
@@ -82,7 +87,7 @@ export const executeTrade = async (
     );
     const message = await summarizeForVoice("place_trade", data);
 
-    response.json({
+    sendToolPayload(response, {
       success: true,
       data,
       message

@@ -1,18 +1,28 @@
 import type { NextFunction, Request, Response } from "express";
 import type { ZodSchema } from "zod";
 import { ZodError } from "zod";
+import {
+  extractVapiToolCall,
+  sendValidationError,
+  setVapiToolLocals
+} from "../utils/vapiTooling.js";
 
 export const validateBody =
-  <T>(schema: ZodSchema<T>) =>
+  <T>(schema: ZodSchema<T>, toolName?: string) =>
   (request: Request, response: Response, next: NextFunction): void => {
-    const parsed = schema.safeParse(request.body);
+    const vapiToolCall = toolName
+      ? extractVapiToolCall(request.body, toolName)
+      : null;
+    const body = vapiToolCall?.arguments ?? request.body;
+
+    if (vapiToolCall) {
+      setVapiToolLocals(response, vapiToolCall.id);
+    }
+
+    const parsed = schema.safeParse(body);
 
     if (!parsed.success) {
-      response.status(400).json({
-        success: false,
-        error: formatZodError(parsed.error),
-        message: "I ran into an issue processing that request."
-      });
+      sendValidationError(response, formatZodError(parsed.error));
       return;
     }
 
