@@ -27,7 +27,7 @@ const placeTradeSchema = z
 
 export const toolsRouter = Router();
 
-toolsRouter.use(requireApiKey);
+toolsRouter.use("/tools", requireApiKey);
 
 toolsRouter.post(
   "/tools/run-arbitrage-scan",
