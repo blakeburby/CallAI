@@ -9,11 +9,15 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsup src/server.ts --format esm",
+    "frontend:dev": "vite --host 0.0.0.0",
+    "frontend:build": "vite build",
+    "backend:build": "tsup src/server.ts --format esm",
+    "build": "npm run frontend:build && npm run backend:build",
     "start": "node dist/server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",
+    "@vapi-ai/web": "^2.5.2",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "openai": "^6.10.0",
@@ -23,6 +27,7 @@
     "@types/express": "^5.0.6",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^8.0.9"
   }
 }

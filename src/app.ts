@@ -1,16 +1,30 @@
 import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { frontendRouter } from "./routes/frontend.js";
 import { healthRouter } from "./routes/health.js";
 import { toolsRouter } from "./routes/tools.js";
 import { webhookRouter } from "./routes/webhook.js";
 import { logger } from "./utils/logger.js";
 
 export const app = express();
+const appRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
+const publicDirectory = path.join(appRoot, "public");
 
 app.use(express.json({ limit: "1mb" }));
 
 app.use(healthRouter);
+app.use(frontendRouter);
 app.use(toolsRouter);
 app.use(webhookRouter);
+app.use(express.static(publicDirectory));
+
+app.get("/", (_request, response) => {
+  response.sendFile(path.join(publicDirectory, "index.html"));
+});
 
 app.use((_request, response) => {
   response.status(404).json({
@@ -36,3 +50,5 @@ app.use(
     });
   }
 );
+
+export default app;
