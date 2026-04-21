@@ -19,8 +19,22 @@ export const createPostgresPool = (): PgPool | null => {
 
   const pool = new Pool({
     connectionString: databaseUrl,
+    connectionTimeoutMillis: Number(
+      process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? 15000
+    ),
+    idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30000),
+    keepAlive: true,
     max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+    maxUses: Number(process.env.DATABASE_POOL_MAX_USES ?? 500),
     ssl: resolveDatabaseSsl(databaseUrl)
+  });
+
+  pool.on("connect", (client) => {
+    client.on("error", (error) => {
+      logger.warn("Postgres client error", {
+        error: error.message
+      });
+    });
   });
 
   pool.on("error", (error) => {
