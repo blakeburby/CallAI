@@ -122,7 +122,11 @@ const executeByAction = async (
     throw new Error("Repo has no local_path configured for runner execution.");
   }
 
-  await gitService.ensureRepo(repo.local_path);
+  await gitService.ensureRepo(
+    repo.local_path,
+    repo.clone_url,
+    repo.default_branch
+  );
 
   if (
     structured.action === "inspect_repo" ||

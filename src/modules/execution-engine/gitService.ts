@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 type CommandResult = {
@@ -9,14 +9,24 @@ type CommandResult = {
 };
 
 export const gitService = {
-  async ensureRepo(repoPath: string): Promise<void> {
+  async ensureRepo(
+    repoPath: string,
+    cloneUrl?: string,
+    defaultBranch?: string
+  ): Promise<void> {
     const result = await runCommand("git", ["rev-parse", "--show-toplevel"], {
       cwd: repoPath
     });
 
-    if (result.code !== 0) {
+    if (result.code === 0) {
+      return;
+    }
+
+    if (!cloneUrl) {
       throw new Error(`Not a git repository: ${repoPath}`);
     }
+
+    await cloneRepo(repoPath, cloneUrl, defaultBranch);
   },
 
   async currentBranch(repoPath: string): Promise<string> {
@@ -98,6 +108,36 @@ export const gitService = {
 
   runCommand
 };
+
+async function cloneRepo(
+  repoPath: string,
+  cloneUrl: string,
+  defaultBranch?: string
+): Promise<void> {
+  await mkdir(path.dirname(repoPath), { recursive: true });
+
+  const existingFiles = await readdir(repoPath).catch(() => []);
+  if (existingFiles.length > 0) {
+    throw new Error(`Not a git repository and path is not empty: ${repoPath}`);
+  }
+
+  const args = ["clone", "--depth", "1"];
+
+  if (defaultBranch) {
+    args.push("--branch", defaultBranch);
+  }
+
+  args.push(cloneUrl, repoPath);
+
+  const result = await runCommand("git", args, {
+    cwd: path.dirname(repoPath),
+    timeoutMs: Number(process.env.RUNNER_GIT_TIMEOUT_MS ?? 180000)
+  });
+
+  if (result.code !== 0) {
+    throw new Error(result.stderr || `Could not clone ${cloneUrl}.`);
+  }
+}
 
 async function runCommand(
   command: string,
