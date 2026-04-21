@@ -403,6 +403,33 @@ dd {
   background: rgba(255, 107, 107, 0.14);
 }
 
+.status-chip {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid rgba(111, 231, 183, 0.5);
+  border-radius: 8px;
+  padding: 2px 8px;
+  color: #e9fff7;
+  background: rgba(111, 231, 183, 0.14);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.status-chip.muted {
+  border-color: rgba(255, 209, 102, 0.5);
+  color: #fff4d0;
+  background: rgba(255, 209, 102, 0.12);
+}
+
+.metadata dd small {
+  display: block;
+  margin-top: 6px;
+  color: #aab7c0;
+}
+
 .instructions {
   margin: 18px 0 0;
   color: #d5e0e6;

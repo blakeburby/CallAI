@@ -6,6 +6,7 @@ import {
   frontendSessionCookieName,
   isFrontendAuthenticated
 } from "../middleware/frontendSession.js";
+import { smsService } from "../modules/sms/smsService.js";
 
 const ASSISTANT_ID = "fa6b7d3e-5fed-4137-acd9-87cef47e548a";
 const ASSISTANT_NAME = "CallAI Developer Operator";
@@ -67,6 +68,7 @@ frontendRouter.get("/frontend/config", (request, response) => {
       assistantId: process.env.VAPI_ASSISTANT_ID || ASSISTANT_ID,
       assistantName: process.env.VAPI_ASSISTANT_NAME || ASSISTANT_NAME,
       backendUrl: getPublicOrigin(request),
+      sms: smsService.configSummary(),
       vapiPublicKey: publicKey
     }
   });

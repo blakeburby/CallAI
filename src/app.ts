@@ -6,6 +6,7 @@ import { frontendRouter } from "./routes/frontend.js";
 import { healthRouter } from "./routes/health.js";
 import { operatorRouter } from "./routes/operator.js";
 import { runnerRouter } from "./routes/runner.js";
+import { smsRouter } from "./routes/sms.js";
 import { toolsRouter } from "./routes/tools.js";
 import { voiceRouter } from "./routes/voice.js";
 import { webhookRouter } from "./routes/webhook.js";
@@ -19,6 +20,7 @@ const appRoot = path.resolve(
 const publicDirectory = path.join(appRoot, "public");
 
 app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
 app.use(healthRouter);
 app.use(frontendRouter);
@@ -26,6 +28,7 @@ app.use(operatorRouter);
 app.use(toolsRouter);
 app.use(voiceRouter);
 app.use(runnerRouter);
+app.use(smsRouter);
 app.use(webhookRouter);
 app.use(express.static(publicDirectory));
 

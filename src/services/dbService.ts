@@ -10,6 +10,7 @@ import type {
   MemoryRecord,
   PermissionLevel,
   RepoRecord,
+  RunnerTaskScope,
   TaskStatus,
   VoiceSessionRecord
 } from "../types/operator.js";
@@ -433,20 +434,23 @@ export const database = {
   },
 
   async claimNextQueuedTask(
-    executor: ExecutorKind
+    executor: ExecutorKind,
+    scope: RunnerTaskScope = "all"
   ): Promise<{ task: DeveloperTaskRecord; run: ExecutionRunRecord } | null> {
     if (db) {
       const client = await db.connect();
+      const scopeFilter = taskScopeFilter(scope);
 
       try {
         await client.query("begin");
         const task = await queryOne<DeveloperTaskRecord>(
           `select * from tasks
            where status = 'queued'
+             ${scopeFilter.sql}
            order by created_at asc
            for update skip locked
            limit 1`,
-          [],
+          scopeFilter.values,
           "claim task lookup",
           client
         );
@@ -488,7 +492,7 @@ export const database = {
     const task = memoryStore.tasks
       .slice()
       .reverse()
-      .find((item) => item.status === "queued");
+      .find((item) => item.status === "queued" && taskMatchesScope(item, scope));
 
     if (!task) {
       return null;
@@ -830,6 +834,45 @@ function buildUpdate(
       .join(", "),
     values: entries.map(([, value]) => value)
   };
+}
+
+function taskScopeFilter(scope: RunnerTaskScope): {
+  sql: string;
+  values: unknown[];
+} {
+  if (scope === "read_only") {
+    return {
+      sql: "and permission_required = $1",
+      values: ["read_only"]
+    };
+  }
+
+  if (scope === "write") {
+    return {
+      sql: "and permission_required <> $1",
+      values: ["read_only"]
+    };
+  }
+
+  return {
+    sql: "",
+    values: []
+  };
+}
+
+function taskMatchesScope(
+  task: DeveloperTaskRecord,
+  scope: RunnerTaskScope
+): boolean {
+  if (scope === "read_only") {
+    return task.permission_required === "read_only";
+  }
+
+  if (scope === "write") {
+    return task.permission_required !== "read_only";
+  }
+
+  return true;
 }
 
 async function queryMany<T>(

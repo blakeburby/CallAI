@@ -6,6 +6,11 @@ type AppConfig = {
   assistantId: string;
   assistantName: string;
   backendUrl: string;
+  sms: {
+    enabled: boolean;
+    ownerPhoneTail: string | null;
+    fromNumberTail: string | null;
+  };
   vapiPublicKey: string;
 };
 
@@ -559,6 +564,7 @@ const renderConsole = (): string => `
         <div><dt>Name</dt><dd>${escapeHtml(state.config?.assistantName ?? "")}</dd></div>
         <div><dt>ID</dt><dd>${escapeHtml(state.config?.assistantId ?? "")}</dd></div>
         <div><dt>Backend</dt><dd>${escapeHtml(state.config?.backendUrl ?? "")}</dd></div>
+        <div><dt>Text Control</dt><dd>${renderSmsStatus()}</dd></div>
       </dl>
     </aside>
 
@@ -654,6 +660,7 @@ const renderTaskDetail = (): string => {
       <div><dt>Permission</dt><dd>${escapeHtml(formatLabel(task.permission_required))}</dd></div>
       <div><dt>Confidence</dt><dd>${escapeHtml(formatPercent(structured.confidence))}</dd></div>
       <div><dt>Repo Hint</dt><dd>${escapeHtml(structured.repoAlias ?? "No explicit hint")}</dd></div>
+      <div><dt>Runner</dt><dd>${escapeHtml(describeRunner(detail))}</dd></div>
     </dl>
     <p class="instructions">${escapeHtml(structured.instructions)}</p>
     <ul class="criteria">
@@ -690,6 +697,38 @@ const renderRun = (run: ExecutionRun): string => `
     ${run.final_summary ? `<p>${escapeHtml(run.final_summary)}</p>` : ""}
   </article>
 `;
+
+const renderSmsStatus = (): string => {
+  const sms = state.config?.sms;
+
+  if (!sms?.enabled) {
+    return '<span class="status-chip muted">Not configured</span>';
+  }
+
+  return `<span class="status-chip ok">Enabled</span><small> From ...${escapeHtml(
+    sms.fromNumberTail ?? "----"
+  )} to ...${escapeHtml(sms.ownerPhoneTail ?? "----")}</small>`;
+};
+
+const describeRunner = (detail: TaskStatusData): string => {
+  const claimed = detail.latest_events.find(
+    (event) => event.event_type === "runner.claimed_task"
+  );
+  const runnerId = stringField(claimed?.payload.runner_id);
+  const scope = stringField(claimed?.payload.task_scope);
+
+  if (runnerId) {
+    return `${runnerId}${scope ? ` (${formatLabel(scope)})` : ""}`;
+  }
+
+  const run = detail.runs[0];
+
+  if (run) {
+    return `${formatLabel(run.executor)} pending runner metadata`;
+  }
+
+  return "Not claimed yet";
+};
 
 const renderAuditEvent = (event: AuditEvent): string => `
   <article class="audit-row ${escapeHtml(event.severity)}">
@@ -860,6 +899,10 @@ const formatTime = (value: string): string => {
     hour: "numeric",
     minute: "2-digit"
   });
+};
+
+const stringField = (value: unknown): string | undefined => {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 };
 
 const escapeHtml = (value: string): string => {

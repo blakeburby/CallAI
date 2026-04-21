@@ -38,10 +38,13 @@ export const executorKinds = [
   "chat"
 ] as const;
 
+export const runnerTaskScopes = ["all", "read_only", "write"] as const;
+
 export type NormalizedAction = (typeof normalizedActions)[number];
 export type PermissionLevel = (typeof permissionLevels)[number];
 export type TaskStatus = (typeof taskStatuses)[number];
 export type ExecutorKind = (typeof executorKinds)[number];
+export type RunnerTaskScope = (typeof runnerTaskScopes)[number];
 
 export type DeveloperTask = {
   action: NormalizedAction;
@@ -148,6 +151,7 @@ export type CreateTaskInput = {
   sessionId?: string;
   repoHint?: string;
   userId?: string;
+  source?: "console" | "sms" | "tool" | "voice";
 };
 
 export type TaskCreationResult = {

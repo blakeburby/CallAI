@@ -85,7 +85,8 @@ const handleWebhookToolCall = async (
   const data = await taskService.createFromUtterance({
     utterance,
     sessionId,
-    repoHint
+    repoHint,
+    source: "voice"
   });
 
   return {

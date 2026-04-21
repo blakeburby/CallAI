@@ -9,6 +9,7 @@ import {
   database,
   isDatabaseConfigured
 } from "../services/dbService.js";
+import type { RunnerTaskScope } from "../types/operator.js";
 import { logger } from "../utils/logger.js";
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +18,7 @@ const runnerId =
   process.env.RUNNER_ID ||
   `runner-${process.env.HOSTNAME || "local"}-${process.pid}`;
 const pollIntervalMs = Number(process.env.RUNNER_POLL_INTERVAL_MS ?? 5000);
+const taskScope = parseTaskScope(process.env.RUNNER_TASK_SCOPE);
 
 let stopping = false;
 let healthServer: Server | null = null;
@@ -24,6 +26,7 @@ let healthServer: Server | null = null;
 const main = async (): Promise<void> => {
   logger.info("CallAI agent runner starting", {
     runner_id: runnerId,
+    task_scope: taskScope,
     database: isDatabaseConfigured() ? "configured" : "memory"
   });
 
@@ -33,13 +36,14 @@ const main = async (): Promise<void> => {
   await auditLog.log({
     event_type: "runner.started",
     payload: {
-      runner_id: runnerId
+      runner_id: runnerId,
+      task_scope: taskScope
     }
   });
 
   while (!stopping) {
     try {
-      const claimed = await database.claimNextQueuedTask("codex_local");
+      const claimed = await database.claimNextQueuedTask("codex_local", taskScope);
 
       if (!claimed) {
         await sleep(pollIntervalMs);
@@ -58,6 +62,7 @@ const main = async (): Promise<void> => {
         event_type: "runner.claimed_task",
         payload: {
           runner_id: runnerId,
+          task_scope: taskScope,
           executor
         }
       });
@@ -74,7 +79,8 @@ const main = async (): Promise<void> => {
   await auditLog.log({
     event_type: "runner.stopped",
     payload: {
-      runner_id: runnerId
+      runner_id: runnerId,
+      task_scope: taskScope
     }
   });
 
@@ -109,7 +115,8 @@ const startHealthServer = (): Server | null => {
     response.end(
       JSON.stringify({
         status: "ok",
-        runner_id: runnerId
+        runner_id: runnerId,
+        task_scope: taskScope
       })
     );
   });
@@ -136,6 +143,7 @@ const logPreflight = async (): Promise<void> => {
       default_repo_owner: process.env.DEFAULT_REPO_OWNER || null,
       default_repo_name: process.env.DEFAULT_REPO_NAME || null,
       default_repo_path: process.env.DEFAULT_REPO_PATH || process.cwd(),
+      task_scope: taskScope,
       code_execution_mode: process.env.CODEX_EXECUTION_MODE || "local"
     }
   };
@@ -147,6 +155,14 @@ const logPreflight = async (): Promise<void> => {
     payload
   });
 };
+
+function parseTaskScope(value: string | undefined): RunnerTaskScope {
+  if (value === "read_only" || value === "write" || value === "all") {
+    return value;
+  }
+
+  return "all";
+}
 
 const checkCodexVersion = async (): Promise<{
   ok: boolean;

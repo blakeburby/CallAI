@@ -12,6 +12,7 @@ export default defineConfig({
       "/health": "http://localhost:3000",
       "/operator": "http://localhost:3000",
       "/runner": "http://localhost:3000",
+      "/sms": "http://localhost:3000",
       "/tools": "http://localhost:3000",
       "/voice": "http://localhost:3000",
       "/vapi": "http://localhost:3000"

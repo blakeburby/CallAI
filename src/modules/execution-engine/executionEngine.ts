@@ -2,6 +2,7 @@ import { auditLog } from "../audit-log/auditLogService.js";
 import { codexBridge } from "../codex-bridge/codexBridge.js";
 import { contextMemory } from "../context-memory/contextMemoryService.js";
 import { chatConnector } from "../chat-connector/chatConnector.js";
+import { smsNotifier } from "../sms/smsNotifier.js";
 import { database } from "../../services/dbService.js";
 import type {
   DeveloperTask,
@@ -21,8 +22,9 @@ export const executionEngine = {
     const repo = task.repo_id
       ? await database.findRepoById(task.repo_id)
       : (await contextMemory.resolveRepo(structured)).repo;
+    const runnerRepo = repo ? repoForCurrentRunner(repo) : null;
 
-    if (!repo && structured.action !== "send_chat_message") {
+    if (!runnerRepo && structured.action !== "send_chat_message") {
       await blockTask(task, run, "No repo target was resolved for this task.");
       return;
     }
@@ -34,11 +36,12 @@ export const executionEngine = {
         event_type: "run.started",
         payload: {
           executor: run.executor,
-          repo: repo ? contextMemory.describeRepo(repo) : null
+          repo: runnerRepo ? contextMemory.describeRepo(runnerRepo) : null,
+          repo_path: runnerRepo?.local_path ?? null
         }
       });
 
-      const summary = await executeByAction(task, run, structured, repo);
+      const summary = await executeByAction(task, run, structured, runnerRepo);
 
       await database.updateExecutionRun(run.id, {
         status: "succeeded",
@@ -52,6 +55,7 @@ export const executionEngine = {
         event_type: "run.succeeded",
         payload: { summary }
       });
+      void smsNotifier.taskFinished(task, "succeeded", summary);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
@@ -73,6 +77,7 @@ export const executionEngine = {
         severity: "error",
         payload: { error: message }
       });
+      void smsNotifier.taskFinished(task, "failed", message);
     }
   },
 
@@ -273,6 +278,7 @@ const blockTask = async (
     severity: "warn",
     payload: { reason }
   });
+  void smsNotifier.taskFinished(task, "blocked", reason);
 };
 
 const buildCodexPrompt = (task: DeveloperTask, branchName: string): string => {
@@ -293,6 +299,24 @@ const branchForTask = (task: DeveloperTaskRecord): string => {
     .slice(0, 36);
 
   return `callai/${task.id.slice(0, 8)}-${slug || "task"}`;
+};
+
+const repoForCurrentRunner = (repo: RepoRecord): RepoRecord => {
+  const overridePath = process.env.DEFAULT_REPO_PATH;
+
+  if (
+    process.env.RUNNER_ID === "macbook-local-bridge" &&
+    overridePath &&
+    repo.owner === (process.env.DEFAULT_REPO_OWNER || repo.owner) &&
+    repo.name === (process.env.DEFAULT_REPO_NAME || repo.name)
+  ) {
+    return {
+      ...repo,
+      local_path: overridePath
+    };
+  }
+
+  return repo;
 };
 
 const isRunnerConfigurationIssue = (message: string): boolean => {

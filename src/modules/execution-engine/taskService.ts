@@ -1,6 +1,7 @@
 import { auditLog } from "../audit-log/auditLogService.js";
 import { contextMemory } from "../context-memory/contextMemoryService.js";
 import { parseDeveloperTask } from "../task-parser/taskParser.js";
+import { smsNotifier } from "../sms/smsNotifier.js";
 import { database } from "../../services/dbService.js";
 import type {
   ConfirmationRequestRecord,
@@ -90,6 +91,10 @@ export const taskService = {
           risk: confirmation.risk
         }
       });
+
+      if (input.source !== "sms") {
+        void smsNotifier.taskNeedsConfirmation(task, confirmation);
+      }
     } else {
       await auditLog.log({
         task_id: task.id,

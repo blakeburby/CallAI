@@ -49,7 +49,8 @@ operatorRouter.post("/operator/tasks", async (request, response, next) => {
     const body = createTaskSchema.parse(request.body);
     const data = await taskService.createFromUtterance({
       utterance: body.utterance,
-      repoHint: body.repo_hint
+      repoHint: body.repo_hint,
+      source: "console"
     });
 
     response.json({ success: true, data });

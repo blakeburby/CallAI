@@ -51,7 +51,8 @@ export const createTask = async (
     taskService.createFromUtterance({
       utterance: request.body.utterance,
       sessionId: request.body.session_id,
-      repoHint: request.body.repo_hint
+      repoHint: request.body.repo_hint,
+      source: "tool"
     })
   );
 };

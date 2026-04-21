@@ -5,3 +5,5 @@ public/
 .DS_Store
 npm-debug.log*
 .vercel
+logs/*.log
+!logs/.gitkeep

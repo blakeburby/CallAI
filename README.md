@@ -1,6 +1,6 @@
 # CallAI Remote Developer Operator
 
-CallAI is a Vapi-powered voice control plane for remote developer operations. The Vercel app hosts the browser voice console, Vapi tool endpoints, webhook receiver, task APIs, and audit views. Long-running repo work runs in a persistent Railway `agent-runner` worker that claims queued tasks from Railway Postgres and delegates coding work to Codex CLI or Codex Cloud.
+CallAI is a Vapi-powered voice and text control plane for remote developer operations. The Vercel app hosts the browser voice console, Vapi tool endpoints, SMS webhook, task APIs, and audit views. Long-running repo work runs through Railway Postgres and can be claimed by either the Railway `agent-runner` worker or Blake's local Mac bridge using the desktop Codex CLI/auth environment.
 
 ## Architecture
 
@@ -9,13 +9,18 @@ flowchart LR
   User["Voice or browser user"] --> Vapi["Vapi assistant"]
   Vapi --> API["Vercel Express API"]
   Browser["Operator console"] --> API
+  SMS["Twilio SMS"] --> API
   API --> Parser["task-parser"]
   Parser --> Memory["context-memory"]
   API --> RailwayDB["Railway Postgres tasks and audit log"]
   Runner["Railway agent-runner"] --> RailwayDB
+  MacBridge["Mac local bridge"] --> RailwayDB
   Runner --> Repo["Repo workspace"]
+  MacBridge --> LocalRepo["Local repo workspace"]
   Runner --> Codex["codex-bridge"]
+  MacBridge --> LocalCodex["Local Codex CLI"]
   Codex --> Repo
+  LocalCodex --> LocalRepo
   Runner --> Chat["chat-connector"]
 ```
 
@@ -43,6 +48,15 @@ npm run runner
 ```
 
 For local runner development without a build, use `npm run runner:dev`.
+
+Run Blake's local desktop bridge manually:
+
+```bash
+npm run build
+npm run local-bridge
+```
+
+For local bridge development without a build, use `npm run local-bridge:dev`.
 
 ## Required Production Services
 
@@ -111,6 +125,75 @@ The checked-in `railway.toml` sets that worker command. Configure the worker wit
 - `CODEX_EXECUTION_MODE=local`
 - `DEFAULT_REPO_OWNER`, `DEFAULT_REPO_NAME`, `DEFAULT_REPO_URL`, `DEFAULT_REPO_PATH`, and `DEFAULT_REPO_BRANCH`
 - any GitHub/Codex auth variables needed for non-interactive repo work
+
+If the Mac local bridge is the write-capable executor, set the Railway worker to read-only background work:
+
+```bash
+RUNNER_ID=railway-runner
+RUNNER_TASK_SCOPE=read_only
+```
+
+Only one write-capable runner should normally be active. The task queue uses `FOR UPDATE SKIP LOCKED`, so duplicate claiming is protected, but one write-capable runner keeps repo branches, Codex auth, and local workspaces predictable.
+
+## Local Desktop Codex Bridge
+
+The local bridge uses the same Railway Postgres queue as Vercel and Railway, but executes on this Mac with:
+
+- `RUNNER_ID=macbook-local-bridge`
+- `CODEX_EXECUTABLE=/Applications/Codex.app/Contents/Resources/codex`
+- `DEFAULT_REPO_PATH=/Users/blakeburby/Desktop/CallAI-main`
+- `CODEX_EXECUTION_MODE=local`
+
+It claims queued tasks, logs runner metadata to the audit timeline, creates `callai/*` branches for write tasks, and invokes:
+
+```bash
+codex exec --json --sandbox workspace-write --cd <repo> <prompt>
+```
+
+Manual preflight:
+
+```bash
+npm run build
+npm run local-bridge
+```
+
+LaunchAgent setup, after `.env` contains `DATABASE_URL`, `OPENAI_API_KEY`, and the bridge env values:
+
+```bash
+mkdir -p logs ~/Library/LaunchAgents
+cp launchd/com.blake.callai.local-bridge.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.blake.callai.local-bridge.plist
+launchctl kickstart -k gui/$(id -u)/com.blake.callai.local-bridge
+tail -f logs/local-bridge.out.log logs/local-bridge.err.log
+```
+
+Stop/unload:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.blake.callai.local-bridge.plist
+```
+
+The Mac must be awake, online, and logged in for this LaunchAgent to run.
+
+## SMS Text Control
+
+Two-way text control uses Twilio. Configure these Vercel production env vars:
+
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_FROM_NUMBER`
+- `OWNER_PHONE_NUMBER`
+- `SMS_WEBHOOK_SECRET`
+
+Set the Twilio Messaging webhook for the SMS-capable Twilio number to:
+
+```text
+https://callai-iota.vercel.app/sms/inbound?secret=<SMS_WEBHOOK_SECRET>
+```
+
+Inbound SMS is accepted only from `OWNER_PHONE_NUMBER`. Texts are parsed into CallAI tasks, then Vercel replies with a concise queued or confirmation-needed message. Completion, failure, blocked, and confirmation-needed notifications are sent back by SMS when Twilio env is configured.
+
+The browser console exposes only whether text control is configured and the last four digits of the owner/from numbers. It never exposes Twilio tokens, OpenAI keys, Vapi private keys, or `DATABASE_URL`.
 
 ## Runner
 
