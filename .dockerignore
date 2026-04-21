@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.git
+.vercel
+CallAI-Setup-Directions.pdf
+dist
+node_modules
+npm-debug.log*
+public
