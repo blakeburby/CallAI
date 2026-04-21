@@ -38,8 +38,11 @@ npm run frontend:dev
 Run the persistent task worker in a separate terminal:
 
 ```bash
+npm run build
 npm run runner
 ```
+
+For local runner development without a build, use `npm run runner:dev`.
 
 ## Required Production Services
 

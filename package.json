@@ -11,12 +11,13 @@
     "dev": "tsx watch src/server.ts",
     "frontend:dev": "vite --host 0.0.0.0",
     "frontend:build": "vite build",
-    "backend:build": "tsup src/server.ts --format esm",
+    "backend:build": "tsup src/server.ts src/runner/agentRunner.ts --format esm",
     "build": "npm run frontend:build && npm run backend:build",
     "db:migrate": "tsx src/scripts/migrateDatabase.ts",
     "db:seed": "tsx src/scripts/seedDatabase.ts",
     "start": "node dist/server.js",
-    "runner": "tsx src/runner/agentRunner.ts"
+    "runner": "node dist/runner/agentRunner.js",
+    "runner:dev": "tsx src/runner/agentRunner.ts"
   },
   "dependencies": {
     "@openai/codex": "^0.122.0",
