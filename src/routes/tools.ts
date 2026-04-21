@@ -1,27 +1,65 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
-  executeTrade,
-  getOpenPositions,
-  runArbitrageScan
-} from "../controllers/tradingController.js";
-import { getStatus } from "../controllers/systemController.js";
+  approveAction,
+  cancelTask,
+  continueTask,
+  createTask,
+  getTaskStatus,
+  sendProjectUpdate,
+  startOutboundCall
+} from "../controllers/operatorController.js";
 import { requireApiKey } from "../middleware/auth.js";
 import { validateBody } from "../middleware/validate.js";
 
-const emptyBodySchema = z.object({}).strict();
-
-const runArbitrageScanSchema = z
+const createTaskSchema = z
   .object({
-    min_ev: z.number().min(0).max(1).default(0.03)
+    utterance: z.string().min(3).max(5000),
+    session_id: z.string().min(1).optional(),
+    repo_hint: z.string().min(1).max(200).optional()
   })
   .strict();
 
-const placeTradeSchema = z
+const getTaskStatusSchema = z
   .object({
-    asset: z.enum(["BTC", "ETH", "SOL", "XRP"]),
-    direction: z.enum(["YES", "NO"]),
-    size: z.number().positive().max(0.05)
+    task_id: z.string().min(1)
+  })
+  .strict();
+
+const continueTaskSchema = z
+  .object({
+    task_id: z.string().min(1),
+    instructions: z.string().min(1).max(5000).optional()
+  })
+  .strict();
+
+const approveActionSchema = z
+  .object({
+    confirmation_id: z.string().min(1),
+    decision: z.enum(["approved", "denied"])
+  })
+  .strict();
+
+const cancelTaskSchema = z
+  .object({
+    task_id: z.string().min(1),
+    reason: z.string().min(1).max(1000).optional()
+  })
+  .strict();
+
+const sendProjectUpdateSchema = z
+  .object({
+    task_id: z.string().min(1).optional(),
+    channel_hint: z.string().min(1).max(200).optional(),
+    message: z.string().min(1).max(4000)
+  })
+  .strict();
+
+const startOutboundCallSchema = z
+  .object({
+    phone_number: z.string().regex(/^\+[1-9]\d{7,14}$/),
+    reason: z.string().min(3).max(1000),
+    task_id: z.string().min(1).optional()
   })
   .strict();
 
@@ -30,25 +68,43 @@ export const toolsRouter = Router();
 toolsRouter.use("/tools", requireApiKey);
 
 toolsRouter.post(
-  "/tools/run-arbitrage-scan",
-  validateBody(runArbitrageScanSchema, "run_arbitrage_scan"),
-  runArbitrageScan
+  "/tools/create-task",
+  validateBody(createTaskSchema, "create_task"),
+  createTask
 );
 
 toolsRouter.post(
-  "/tools/get-open-positions",
-  validateBody(emptyBodySchema, "get_open_positions"),
-  getOpenPositions
+  "/tools/get-task-status",
+  validateBody(getTaskStatusSchema, "get_task_status"),
+  getTaskStatus
 );
 
 toolsRouter.post(
-  "/tools/place-trade",
-  validateBody(placeTradeSchema, "place_trade"),
-  executeTrade
+  "/tools/continue-task",
+  validateBody(continueTaskSchema, "continue_task"),
+  continueTask
 );
 
 toolsRouter.post(
-  "/tools/system-status",
-  validateBody(emptyBodySchema, "system_status"),
-  getStatus
+  "/tools/approve-action",
+  validateBody(approveActionSchema, "approve_action"),
+  approveAction
+);
+
+toolsRouter.post(
+  "/tools/cancel-task",
+  validateBody(cancelTaskSchema, "cancel_task"),
+  cancelTask
+);
+
+toolsRouter.post(
+  "/tools/send-project-update",
+  validateBody(sendProjectUpdateSchema, "send_project_update"),
+  sendProjectUpdate
+);
+
+toolsRouter.post(
+  "/tools/start-outbound-call",
+  validateBody(startOutboundCallSchema, "start_outbound_call"),
+  startOutboundCall
 );

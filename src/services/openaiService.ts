@@ -1,100 +1,162 @@
+import OpenAI from "openai";
+
 const VOICE_SUMMARY_SYSTEM_PROMPT =
-  "You are a trading assistant. Convert JSON data into one concise spoken sentence. No markdown. No numbers beyond 2 decimal places. Sound natural, not robotic.";
+  "You are a remote developer operations assistant. Convert JSON task or execution data into one concise spoken sentence. No markdown. No numbers beyond 2 decimal places. Sound natural, not robotic. Never read secrets aloud.";
 
 const INTENT_NAMES = [
-  "run_arbitrage_scan",
-  "get_open_positions",
-  "place_trade",
-  "system_status"
+  "create_task",
+  "get_task_status",
+  "continue_task",
+  "approve_action",
+  "cancel_task",
+  "send_project_update",
+  "start_outbound_call"
 ] as const;
 
 type IntentName = (typeof INTENT_NAMES)[number];
 
-type ChatMessage = {
-  role: "system" | "user";
-  content: string;
-};
+let client: OpenAI | null = null;
 
-type ChatCompletionResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string | null;
-    };
-  }>;
-};
-
-const chatCompletion = async (
-  model: string,
-  maxTokens: number,
-  messages: ChatMessage[]
-): Promise<string> => {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is required");
+export const getOpenAIClient = (): OpenAI | null => {
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
   }
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages
-    }),
-    signal: AbortSignal.timeout(20000)
+  client ??= new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI request failed with ${response.status}: ${errorText}`);
-  }
-
-  const completion = (await response.json()) as ChatCompletionResponse;
-
-  return completion.choices?.[0]?.message?.content?.trim() || "";
+  return client;
 };
 
 export const summarizeForVoice = async (
   toolName: string,
   data: unknown
 ): Promise<string> => {
-  const summary = await chatCompletion("gpt-4o", 120, [
-    {
-      role: "system",
-      content: VOICE_SUMMARY_SYSTEM_PROMPT
-    },
-    {
-      role: "user",
-      content: JSON.stringify({
-        toolName,
-        data
-      })
-    }
-  ]);
+  const openai = getOpenAIClient();
 
-  return summary || "I completed the request successfully.";
+  if (!openai) {
+    return fallbackSummary(toolName, data);
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: process.env.VOICE_SUMMARY_MODEL ?? "gpt-4o",
+    max_tokens: 120,
+    messages: [
+      {
+        role: "system",
+        content: VOICE_SUMMARY_SYSTEM_PROMPT
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          toolName,
+          data
+        })
+      }
+    ]
+  });
+
+  return (
+    completion.choices[0]?.message?.content?.trim() ||
+    fallbackSummary(toolName, data)
+  );
 };
 
 export const resolveIntent = async (transcript: string): Promise<string> => {
-  const resolved = (await chatCompletion("gpt-4o-mini", 30, [
-    {
-      role: "system",
-      content:
-        "Map the user's trading command to exactly one function name. Return only one of: run_arbitrage_scan, get_open_positions, place_trade, system_status."
-    },
-    {
-      role: "user",
-      content: transcript
-    }
-  ])) as IntentName;
+  const openai = getOpenAIClient();
+
+  if (!openai) {
+    return transcript.toLowerCase().includes("status")
+      ? "get_task_status"
+      : "create_task";
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: process.env.INTENT_MODEL ?? "gpt-4o-mini",
+    max_tokens: 30,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Map the user's developer-operator command to exactly one function name. Return only one of: create_task, get_task_status, continue_task, approve_action, cancel_task, send_project_update, start_outbound_call."
+      },
+      {
+        role: "user",
+        content: transcript
+      }
+    ]
+  });
+
+  const resolved = completion.choices[0]?.message?.content?.trim() as IntentName;
 
   if (INTENT_NAMES.includes(resolved)) {
     return resolved;
   }
 
-  return "system_status";
+  return "create_task";
+};
+
+export const completeJson = async <T>(input: {
+  model?: string;
+  system: string;
+  user: string;
+  maxTokens?: number;
+}): Promise<T | null> => {
+  const openai = getOpenAIClient();
+
+  if (!openai) {
+    return null;
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: input.model ?? process.env.TASK_PARSER_MODEL ?? "gpt-4o-mini",
+    max_tokens: input.maxTokens ?? 700,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: input.system
+      },
+      {
+        role: "user",
+        content: input.user
+      }
+    ]
+  });
+
+  const content = completion.choices[0]?.message?.content;
+
+  if (!content) {
+    return null;
+  }
+
+  return JSON.parse(content) as T;
+};
+
+const fallbackSummary = (toolName: string, data: unknown): string => {
+  if (toolName === "create_task") {
+    const record = asRecord(data);
+    const status = stringValue(record?.status) ?? "queued";
+    return `I understood the task and it is now ${status.replaceAll("_", " ")}.`;
+  }
+
+  if (toolName === "get_task_status") {
+    const record = asRecord(data);
+    const task = asRecord(record?.task);
+    const status = stringValue(task?.status) ?? "unknown";
+    return `That task is currently ${status.replaceAll("_", " ")}.`;
+  }
+
+  return "I completed that developer operation.";
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+};
+
+const stringValue = (value: unknown): string | undefined => {
+  return typeof value === "string" ? value : undefined;
 };

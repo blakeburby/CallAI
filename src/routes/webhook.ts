@@ -1,9 +1,10 @@
 import { Router } from "express";
+import { voiceOrchestrator } from "../modules/voice-orchestrator/voiceOrchestrator.js";
 import { logger } from "../utils/logger.js";
 
 export const webhookRouter = Router();
 
-webhookRouter.post("/vapi/webhook", (request, response) => {
+webhookRouter.post("/vapi/webhook", async (request, response, next) => {
   const configuredSecret = process.env.VAPI_WEBHOOK_SECRET;
   const suppliedSecret =
     request.header("x-vapi-secret") ||
@@ -16,13 +17,10 @@ webhookRouter.post("/vapi/webhook", (request, response) => {
     return;
   }
 
-  logger.info("Received Vapi webhook", {
-    headers: {
-      "x-vapi-event": request.header("x-vapi-event"),
-      "user-agent": request.header("user-agent")
-    },
-    body: request.body
-  });
-
-  response.json({ success: true });
+  try {
+    const result = await voiceOrchestrator.handleWebhook(request.body);
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
 });

@@ -1,7 +1,7 @@
 {
   "name": "callai",
   "version": "1.0.0",
-  "description": "Vapi tool execution layer for a trading voice AI agent.",
+  "description": "Remote voice-controlled developer operator for Vapi, Codex, and repo workflows.",
   "type": "module",
   "main": "dist/server.js",
   "engines": {
@@ -13,7 +13,8 @@
     "frontend:build": "vite build",
     "backend:build": "tsup src/server.ts --format esm",
     "build": "npm run frontend:build && npm run backend:build",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "runner": "tsx src/runner/agentRunner.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",
