@@ -157,9 +157,14 @@ npm run build
 npm run local-bridge
 ```
 
-LaunchAgent setup, after `.env` contains `DATABASE_URL`, `OPENAI_API_KEY`, and the bridge env values:
+LaunchAgent setup, after `.env` contains `DATABASE_URL`, `OPENAI_API_KEY`, and the bridge env values. The checked-in LaunchAgent uses `/Users/blakeburby/CallAI-local-bridge` instead of the Desktop checkout so macOS background privacy controls do not block access to the working directory.
 
 ```bash
+git clone https://github.com/blakeburby/CallAI.git /Users/blakeburby/CallAI-local-bridge
+cp /Users/blakeburby/Desktop/CallAI-main/.env /Users/blakeburby/CallAI-local-bridge/.env
+cd /Users/blakeburby/CallAI-local-bridge
+npm install
+npm run build
 mkdir -p logs ~/Library/LaunchAgents
 cp launchd/com.blake.callai.local-bridge.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.blake.callai.local-bridge.plist
