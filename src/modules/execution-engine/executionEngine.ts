@@ -55,6 +55,11 @@ export const executionEngine = {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
+      if (isRunnerConfigurationIssue(message)) {
+        await blockTask(task, run, message);
+        return;
+      }
+
       await database.updateExecutionRun(run.id, {
         status: "failed",
         finished_at: new Date().toISOString(),
@@ -284,4 +289,10 @@ const branchForTask = (task: DeveloperTaskRecord): string => {
     .slice(0, 36);
 
   return `callai/${task.id.slice(0, 8)}-${slug || "task"}`;
+};
+
+const isRunnerConfigurationIssue = (message: string): boolean => {
+  return /failed to start|enoent|no such file|command not found|not authenticated|authentication|log in|login|api key|openai_api_key|codex_home/i.test(
+    message
+  );
 };

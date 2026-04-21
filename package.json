@@ -13,19 +13,23 @@
     "frontend:build": "vite build",
     "backend:build": "tsup src/server.ts --format esm",
     "build": "npm run frontend:build && npm run backend:build",
+    "db:migrate": "tsx src/scripts/migrateDatabase.ts",
+    "db:seed": "tsx src/scripts/seedDatabase.ts",
     "start": "node dist/server.js",
     "runner": "tsx src/runner/agentRunner.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.58.0",
+    "@openai/codex": "^0.122.0",
     "@vapi-ai/web": "^2.5.2",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "openai": "^6.10.0",
+    "pg": "^8.20.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/pg": "^8.20.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

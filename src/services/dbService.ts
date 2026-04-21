@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { Pool as PgPool, PoolClient, QueryResultRow } from "pg";
 import type {
   AuditEventRecord,
   ChatChannelRecord,
@@ -13,9 +13,11 @@ import type {
   TaskStatus,
   VoiceSessionRecord
 } from "../types/operator.js";
+import { createPostgresPool } from "./postgresService.js";
 import { logger } from "../utils/logger.js";
 
 type JsonRecord = Record<string, unknown>;
+type Queryable = Pick<PgPool | PoolClient, "query">;
 
 type CreateTaskRow = {
   session_id?: string | null;
@@ -74,28 +76,15 @@ type InMemoryStore = {
   }>;
 };
 
-const now = (): string => new Date().toISOString();
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-
-export const createSupabaseClient = (): SupabaseClient | null => {
-  const key = supabaseServiceRoleKey || supabaseAnonKey;
-
-  if (!supabaseUrl || !key) {
-    return null;
-  }
-
-  return createClient(supabaseUrl, key, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  });
+type DatabaseHealth = {
+  configured: boolean;
+  ok: boolean;
+  message: string;
 };
 
-export const db = createSupabaseClient();
+const now = (): string => new Date().toISOString();
+
+export const db = createPostgresPool();
 
 const memoryStore: InMemoryStore = {
   auditEvents: [],
@@ -110,9 +99,36 @@ const memoryStore: InMemoryStore = {
   voiceSessions: []
 };
 
-seedMemoryStore();
+if (!db) {
+  seedMemoryStore();
+}
 
-export const isSupabaseConfigured = (): boolean => Boolean(db);
+export const isDatabaseConfigured = (): boolean => Boolean(db);
+
+export const checkDatabaseConnection = async (): Promise<DatabaseHealth> => {
+  if (!db) {
+    return {
+      configured: false,
+      ok: true,
+      message: "DATABASE_URL is not set; using in-memory fallback."
+    };
+  }
+
+  try {
+    await db.query("select 1");
+    return {
+      configured: true,
+      ok: true,
+      message: "Database connection succeeded."
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      ok: false,
+      message: errorMessage(error)
+    };
+  }
+};
 
 export const database = {
   async upsertVoiceSession(
@@ -120,22 +136,29 @@ export const database = {
   ): Promise<VoiceSessionRecord> {
     if (db) {
       if (input.vapi_call_id) {
-        const existing = await selectOne<VoiceSessionRecord>(
-          db
-            .from("voice_sessions")
-            .select("*")
-            .eq("vapi_call_id", input.vapi_call_id)
-            .maybeSingle(),
-          "find voice session"
+        return queryRequired<VoiceSessionRecord>(
+          `insert into voice_sessions (vapi_call_id, user_id, channel, status)
+           values ($1, $2, $3, $4)
+           on conflict (vapi_call_id) do update
+             set user_id = coalesce(excluded.user_id, voice_sessions.user_id),
+                 channel = excluded.channel,
+                 status = excluded.status
+           returning *`,
+          [
+            input.vapi_call_id,
+            input.user_id ?? null,
+            input.channel,
+            input.status
+          ],
+          "upsert voice session"
         );
-
-        if (existing) {
-          return updateVoiceSession(existing.id, { status: input.status });
-        }
       }
 
-      return insertOne<VoiceSessionRecord>(
-        db.from("voice_sessions").insert(input).select("*").single(),
+      return queryRequired<VoiceSessionRecord>(
+        `insert into voice_sessions (user_id, channel, status)
+         values ($1, $2, $3)
+         returning *`,
+        [input.user_id ?? null, input.channel, input.status],
         "create voice session"
       );
     }
@@ -148,6 +171,8 @@ export const database = {
 
     if (existing) {
       existing.status = input.status;
+      existing.channel = input.channel;
+      existing.user_id = input.user_id ?? existing.user_id;
       return existing;
     }
 
@@ -167,10 +192,10 @@ export const database = {
   async endVoiceSession(sessionId: string): Promise<void> {
     if (db) {
       await execute(
-        db
-          .from("voice_sessions")
-          .update({ status: "ended", ended_at: now() })
-          .eq("id", sessionId),
+        `update voice_sessions
+         set status = 'ended', ended_at = now()
+         where id = $1`,
+        [sessionId],
         "end voice session"
       );
       return;
@@ -190,11 +215,9 @@ export const database = {
   }): Promise<void> {
     if (db) {
       await execute(
-        db.from("transcripts").insert({
-          session_id: input.session_id,
-          role: input.role,
-          text: input.text
-        }),
+        `insert into transcripts (session_id, role, text)
+         values ($1, $2, $3)`,
+        [input.session_id, input.role, input.text],
         "append transcript"
       );
       return;
@@ -209,8 +232,24 @@ export const database = {
 
   async createTask(input: CreateTaskRow): Promise<DeveloperTaskRecord> {
     if (db) {
-      return insertOne<DeveloperTaskRecord>(
-        db.from("tasks").insert(input).select("*").single(),
+      return queryRequired<DeveloperTaskRecord>(
+        `insert into tasks (
+           session_id, user_id, repo_id, title, raw_request,
+           normalized_action, structured_request, status, permission_required
+         )
+         values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+         returning *`,
+        [
+          input.session_id ?? null,
+          input.user_id ?? null,
+          input.repo_id ?? null,
+          input.title,
+          input.raw_request,
+          input.normalized_action,
+          JSON.stringify(input.structured_request),
+          input.status,
+          input.permission_required
+        ],
         "create task"
       );
     }
@@ -237,8 +276,9 @@ export const database = {
 
   async getTask(taskId: string): Promise<DeveloperTaskRecord | null> {
     if (db) {
-      return selectOne<DeveloperTaskRecord>(
-        db.from("tasks").select("*").eq("id", taskId).maybeSingle(),
+      return queryOne<DeveloperTaskRecord>(
+        "select * from tasks where id = $1 limit 1",
+        [taskId],
         "get task"
       );
     }
@@ -248,17 +288,13 @@ export const database = {
 
   async listTasks(limit = 25): Promise<DeveloperTaskRecord[]> {
     if (db) {
-      const { data, error } = await db
-        .from("tasks")
-        .select("*")
-        .order("updated_at", { ascending: false })
-        .limit(limit);
-
-      if (error) {
-        throw new Error(`list tasks failed: ${error.message}`);
-      }
-
-      return (data ?? []) as DeveloperTaskRecord[];
+      return queryMany<DeveloperTaskRecord>(
+        `select * from tasks
+         order by updated_at desc
+         limit $1`,
+        [limit],
+        "list tasks"
+      );
     }
 
     return memoryStore.tasks.slice(0, limit);
@@ -273,14 +309,29 @@ export const database = {
       >
     >
   ): Promise<DeveloperTaskRecord> {
-    const update = {
-      ...patch,
-      updated_at: now()
-    };
-
     if (db) {
-      return updateOne<DeveloperTaskRecord>(
-        db.from("tasks").update(update).eq("id", taskId).select("*").single(),
+      const update = buildUpdate(
+        {
+          repo_id: patch.repo_id,
+          status: patch.status,
+          structured_request:
+            patch.structured_request === undefined
+              ? undefined
+              : JSON.stringify(patch.structured_request),
+          title: patch.title,
+          permission_required: patch.permission_required
+        },
+        {
+          structured_request: "jsonb"
+        }
+      );
+
+      return queryRequired<DeveloperTaskRecord>(
+        `update tasks
+         set ${update.setSql}, updated_at = now()
+         where id = $1
+         returning *`,
+        [taskId, ...update.values],
         "update task"
       );
     }
@@ -290,7 +341,10 @@ export const database = {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    Object.assign(task, update);
+    Object.assign(task, {
+      ...patch,
+      updated_at: now()
+    });
     return task;
   },
 
@@ -298,8 +352,21 @@ export const database = {
     input: ExecutionRunInput
   ): Promise<ExecutionRunRecord> {
     if (db) {
-      return insertOne<ExecutionRunRecord>(
-        db.from("execution_runs").insert(input).select("*").single(),
+      return queryRequired<ExecutionRunRecord>(
+        `insert into execution_runs (
+           task_id, executor, branch_name, status, started_at, finished_at, final_summary
+         )
+         values ($1, $2, $3, $4, $5, $6, $7)
+         returning *`,
+        [
+          input.task_id,
+          input.executor,
+          input.branch_name ?? null,
+          input.status ?? "queued",
+          input.started_at ?? null,
+          input.finished_at ?? null,
+          input.final_summary ?? null
+        ],
         "create execution run"
       );
     }
@@ -323,13 +390,21 @@ export const database = {
     patch: Partial<ExecutionRunRecord>
   ): Promise<ExecutionRunRecord> {
     if (db) {
-      return updateOne<ExecutionRunRecord>(
-        db
-          .from("execution_runs")
-          .update(patch)
-          .eq("id", runId)
-          .select("*")
-          .single(),
+      const update = buildUpdate({
+        executor: patch.executor,
+        branch_name: patch.branch_name,
+        status: patch.status,
+        started_at: patch.started_at,
+        finished_at: patch.finished_at,
+        final_summary: patch.final_summary
+      });
+
+      return queryRequired<ExecutionRunRecord>(
+        `update execution_runs
+         set ${update.setSql}
+         where id = $1
+         returning *`,
+        [runId, ...update.values],
         "update execution run"
       );
     }
@@ -345,17 +420,13 @@ export const database = {
 
   async listExecutionRuns(taskId: string): Promise<ExecutionRunRecord[]> {
     if (db) {
-      const { data, error } = await db
-        .from("execution_runs")
-        .select("*")
-        .eq("task_id", taskId)
-        .order("started_at", { ascending: false, nullsFirst: false });
-
-      if (error) {
-        throw new Error(`list execution runs failed: ${error.message}`);
-      }
-
-      return (data ?? []) as ExecutionRunRecord[];
+      return queryMany<ExecutionRunRecord>(
+        `select * from execution_runs
+         where task_id = $1
+         order by started_at desc nulls last`,
+        [taskId],
+        "list execution runs"
+      );
     }
 
     return memoryStore.executionRuns.filter((run) => run.task_id === taskId);
@@ -365,46 +436,53 @@ export const database = {
     executor: ExecutorKind
   ): Promise<{ task: DeveloperTaskRecord; run: ExecutionRunRecord } | null> {
     if (db) {
-      const { data: candidates, error } = await db
-        .from("tasks")
-        .select("*")
-        .eq("status", "queued")
-        .order("created_at", { ascending: true })
-        .limit(1);
+      const client = await db.connect();
 
-      if (error) {
-        throw new Error(`claim task lookup failed: ${error.message}`);
+      try {
+        await client.query("begin");
+        const task = await queryOne<DeveloperTaskRecord>(
+          `select * from tasks
+           where status = 'queued'
+           order by created_at asc
+           for update skip locked
+           limit 1`,
+          [],
+          "claim task lookup",
+          client
+        );
+
+        if (!task) {
+          await client.query("commit");
+          return null;
+        }
+
+        const claimedTask = await queryRequired<DeveloperTaskRecord>(
+          `update tasks
+           set status = 'running', updated_at = now()
+           where id = $1
+           returning *`,
+          [task.id],
+          "claim task",
+          client
+        );
+
+        const run = await queryRequired<ExecutionRunRecord>(
+          `insert into execution_runs (task_id, executor, status, started_at)
+           values ($1, $2, 'running', now())
+           returning *`,
+          [claimedTask.id, executor],
+          "create claimed execution run",
+          client
+        );
+
+        await client.query("commit");
+        return { task: claimedTask, run };
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
       }
-
-      const candidate = (candidates?.[0] ?? null) as DeveloperTaskRecord | null;
-      if (!candidate) {
-        return null;
-      }
-
-      const { data: claimedRows, error: claimError } = await db
-        .from("tasks")
-        .update({ status: "running", updated_at: now() })
-        .eq("id", candidate.id)
-        .eq("status", "queued")
-        .select("*");
-
-      if (claimError) {
-        throw new Error(`claim task failed: ${claimError.message}`);
-      }
-
-      const task = (claimedRows?.[0] ?? null) as DeveloperTaskRecord | null;
-      if (!task) {
-        return null;
-      }
-
-      const run = await database.createExecutionRun({
-        task_id: task.id,
-        executor,
-        status: "running",
-        started_at: now()
-      });
-
-      return { task, run };
     }
 
     const task = memoryStore.tasks
@@ -440,8 +518,20 @@ export const database = {
     };
 
     if (db) {
-      return insertOne<AuditEventRecord>(
-        db.from("audit_events").insert(row).select("*").single(),
+      return queryRequired<AuditEventRecord>(
+        `insert into audit_events (
+           task_id, run_id, session_id, event_type, severity, payload
+         )
+         values ($1, $2, $3, $4, $5, $6::jsonb)
+         returning *`,
+        [
+          row.task_id,
+          row.run_id,
+          row.session_id,
+          row.event_type,
+          row.severity,
+          JSON.stringify(row.payload)
+        ],
         "create audit event"
       );
     }
@@ -463,27 +553,28 @@ export const database = {
     const limit = filter.limit ?? 50;
 
     if (db) {
-      let query = db
-        .from("audit_events")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(limit);
+      const clauses: string[] = [];
+      const values: unknown[] = [];
 
       if (filter.taskId) {
-        query = query.eq("task_id", filter.taskId);
+        values.push(filter.taskId);
+        clauses.push(`task_id = $${values.length}`);
       }
 
       if (filter.sessionId) {
-        query = query.eq("session_id", filter.sessionId);
+        values.push(filter.sessionId);
+        clauses.push(`session_id = $${values.length}`);
       }
 
-      const { data, error } = await query;
-
-      if (error) {
-        throw new Error(`list audit events failed: ${error.message}`);
-      }
-
-      return (data ?? []) as AuditEventRecord[];
+      values.push(limit);
+      return queryMany<AuditEventRecord>(
+        `select * from audit_events
+         ${clauses.length ? `where ${clauses.join(" and ")}` : ""}
+         order by created_at desc
+         limit $${values.length}`,
+        values,
+        "list audit events"
+      );
     }
 
     return memoryStore.auditEvents
@@ -503,12 +594,11 @@ export const database = {
     expires_at: string;
   }): Promise<ConfirmationRequestRecord> {
     if (db) {
-      return insertOne<ConfirmationRequestRecord>(
-        db
-          .from("confirmation_requests")
-          .insert(input)
-          .select("*")
-          .single(),
+      return queryRequired<ConfirmationRequestRecord>(
+        `insert into confirmation_requests (task_id, prompt, risk, expires_at)
+         values ($1, $2, $3, $4)
+         returning *`,
+        [input.task_id, input.prompt, input.risk, input.expires_at],
         "create confirmation"
       );
     }
@@ -527,12 +617,9 @@ export const database = {
     confirmationId: string
   ): Promise<ConfirmationRequestRecord | null> {
     if (db) {
-      return selectOne<ConfirmationRequestRecord>(
-        db
-          .from("confirmation_requests")
-          .select("*")
-          .eq("id", confirmationId)
-          .maybeSingle(),
+      return queryOne<ConfirmationRequestRecord>(
+        "select * from confirmation_requests where id = $1 limit 1",
+        [confirmationId],
         "get confirmation"
       );
     }
@@ -546,15 +633,12 @@ export const database = {
     taskId: string
   ): Promise<ConfirmationRequestRecord | null> {
     if (db) {
-      return selectOne<ConfirmationRequestRecord>(
-        db
-          .from("confirmation_requests")
-          .select("*")
-          .eq("task_id", taskId)
-          .eq("status", "pending")
-          .order("expires_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+      return queryOne<ConfirmationRequestRecord>(
+        `select * from confirmation_requests
+         where task_id = $1 and status = 'pending'
+         order by expires_at desc
+         limit 1`,
+        [taskId],
         "get pending confirmation"
       );
     }
@@ -570,18 +654,14 @@ export const database = {
     limit = 25
   ): Promise<ConfirmationRequestRecord[]> {
     if (db) {
-      const { data, error } = await db
-        .from("confirmation_requests")
-        .select("*")
-        .eq("status", "pending")
-        .order("expires_at", { ascending: true })
-        .limit(limit);
-
-      if (error) {
-        throw new Error(`list confirmations failed: ${error.message}`);
-      }
-
-      return (data ?? []) as ConfirmationRequestRecord[];
+      return queryMany<ConfirmationRequestRecord>(
+        `select * from confirmation_requests
+         where status = 'pending'
+         order by expires_at asc
+         limit $1`,
+        [limit],
+        "list confirmations"
+      );
     }
 
     return memoryStore.confirmations
@@ -593,21 +673,17 @@ export const database = {
     confirmationId: string,
     status: ConfirmationRequestRecord["status"]
   ): Promise<ConfirmationRequestRecord> {
-    const patch = {
-      status,
-      decided_at: ["approved", "denied", "expired"].includes(status)
-        ? now()
-        : null
-    };
+    const decidedAt = ["approved", "denied", "expired"].includes(status)
+      ? now()
+      : null;
 
     if (db) {
-      return updateOne<ConfirmationRequestRecord>(
-        db
-          .from("confirmation_requests")
-          .update(patch)
-          .eq("id", confirmationId)
-          .select("*")
-          .single(),
+      return queryRequired<ConfirmationRequestRecord>(
+        `update confirmation_requests
+         set status = $2, decided_at = $3
+         where id = $1
+         returning *`,
+        [confirmationId, status, decidedAt],
         "update confirmation"
       );
     }
@@ -620,14 +696,16 @@ export const database = {
       throw new Error(`Confirmation not found: ${confirmationId}`);
     }
 
-    Object.assign(confirmation, patch);
+    confirmation.status = status;
+    confirmation.decided_at = decidedAt;
     return confirmation;
   },
 
   async findRepoById(repoId: string): Promise<RepoRecord | null> {
     if (db) {
-      return selectOne<RepoRecord>(
-        db.from("repos").select("*").eq("id", repoId).maybeSingle(),
+      return queryOne<RepoRecord>(
+        "select * from repos where id = $1 limit 1",
+        [repoId],
         "find repo by id"
       );
     }
@@ -639,16 +717,11 @@ export const database = {
     const normalized = normalizeAlias(alias);
 
     if (db) {
-      const aliasRow = await selectOne<{ repo_id: string }>(
-        db
-          .from("repo_aliases")
-          .select("repo_id")
-          .in("alias", [
-            normalized,
-            alias.trim().toLowerCase(),
-            alias.trim()
-          ])
-          .maybeSingle(),
+      const aliasRow = await queryOne<{ repo_id: string }>(
+        `select repo_id from repo_aliases
+         where alias = any($1::text[])
+         limit 1`,
+        [[normalized, alias.trim().toLowerCase(), alias.trim()]],
         "find repo alias"
       );
 
@@ -656,17 +729,18 @@ export const database = {
         return database.findRepoById(aliasRow.repo_id);
       }
 
-      const direct = await selectOne<RepoRecord>(
-        db
-          .from("repos")
-          .select("*")
-          .or(`name.ilike.${escapeIlike(normalized)},owner.ilike.${escapeIlike(normalized)}`)
-          .limit(1)
-          .maybeSingle(),
+      const likeTerm = `%${escapeLike(alias.trim() || normalized)}%`;
+      return queryOne<RepoRecord>(
+        `select * from repos
+         where lower(name) = lower($1)
+            or lower(owner || '/' || name) = lower($1)
+            or name ilike $2 escape '\\'
+            or owner ilike $2 escape '\\'
+         order by created_at desc
+         limit 1`,
+        [alias.trim(), likeTerm],
         "find repo by name"
       );
-
-      return direct;
     }
 
     const aliasRow = memoryStore.repoAliases.find(
@@ -689,16 +763,11 @@ export const database = {
 
   async listRepos(): Promise<RepoRecord[]> {
     if (db) {
-      const { data, error } = await db
-        .from("repos")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        throw new Error(`list repos failed: ${error.message}`);
-      }
-
-      return (data ?? []) as RepoRecord[];
+      return queryMany<RepoRecord>(
+        "select * from repos order by created_at desc",
+        [],
+        "list repos"
+      );
     }
 
     return [...memoryStore.repos];
@@ -708,19 +777,22 @@ export const database = {
     hint?: string
   ): Promise<ChatChannelRecord | null> {
     if (db) {
-      let query = db.from("chat_channels").select("*").limit(1);
-
       if (hint) {
-        query = query.ilike("display_name", `%${hint}%`);
+        return queryOne<ChatChannelRecord>(
+          `select * from chat_channels
+           where display_name ilike $1 escape '\\'
+           order by display_name asc
+           limit 1`,
+          [`%${escapeLike(hint)}%`],
+          "find chat channel"
+        );
       }
 
-      const { data, error } = await query;
-
-      if (error) {
-        throw new Error(`find chat channel failed: ${error.message}`);
-      }
-
-      return (data?.[0] ?? null) as ChatChannelRecord | null;
+      return queryOne<ChatChannelRecord>(
+        "select * from chat_channels order by display_name asc limit 1",
+        [],
+        "find chat channel"
+      );
     }
 
     if (!hint) {
@@ -735,70 +807,98 @@ export const database = {
   }
 };
 
-const updateVoiceSession = async (
-  sessionId: string,
-  patch: Partial<VoiceSessionRecord>
-): Promise<VoiceSessionRecord> => {
+function buildUpdate(
+  input: Record<string, unknown>,
+  casts: Record<string, string> = {}
+): {
+  setSql: string;
+  values: unknown[];
+} {
+  const entries = Object.entries(input).filter(([, value]) => value !== undefined);
+
+  if (!entries.length) {
+    throw new Error("No fields provided for update.");
+  }
+
+  return {
+    setSql: entries
+      .map(([field], index) => `${field} = $${index + 2}`)
+      .map((assignment, index) => {
+        const field = entries[index]?.[0];
+        return field && casts[field] ? `${assignment}::${casts[field]}` : assignment;
+      })
+      .join(", "),
+    values: entries.map(([, value]) => value)
+  };
+}
+
+async function queryMany<T>(
+  text: string,
+  values: unknown[],
+  label: string,
+  client?: Queryable
+): Promise<T[]> {
+  const target = client ?? requireDb();
+
+  try {
+    const result = await target.query<QueryResultRow>(text, values);
+    return result.rows as T[];
+  } catch (error) {
+    throw new Error(`${label} failed: ${errorMessage(error)}`);
+  }
+}
+
+async function queryOne<T>(
+  text: string,
+  values: unknown[],
+  label: string,
+  client?: Queryable
+): Promise<T | null> {
+  const rows = await queryMany<T>(text, values, label, client);
+  return rows[0] ?? null;
+}
+
+async function queryRequired<T>(
+  text: string,
+  values: unknown[],
+  label: string,
+  client?: Queryable
+): Promise<T> {
+  const row = await queryOne<T>(text, values, label, client);
+
+  if (!row) {
+    throw new Error(`${label} failed: no rows returned.`);
+  }
+
+  return row;
+}
+
+async function execute(
+  text: string,
+  values: unknown[],
+  label: string
+): Promise<void> {
+  await queryMany(text, values, label);
+}
+
+function requireDb(): PgPool {
   if (!db) {
-    throw new Error("Supabase client missing");
+    throw new Error("DATABASE_URL is required for persistent database access.");
   }
 
-  return updateOne<VoiceSessionRecord>(
-    db
-      .from("voice_sessions")
-      .update(patch)
-      .eq("id", sessionId)
-      .select("*")
-      .single(),
-    "update voice session"
-  );
-};
-
-const insertOne = async <T>(
-  query: PromiseLike<{ data: unknown; error: { message: string } | null }>,
-  label: string
-): Promise<T> => {
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`${label} failed: ${error.message}`);
-  }
-
-  return data as T;
-};
-
-const updateOne = insertOne;
-
-const selectOne = async <T>(
-  query: PromiseLike<{ data: unknown; error: { message: string } | null }>,
-  label: string
-): Promise<T | null> => {
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`${label} failed: ${error.message}`);
-  }
-
-  return (data ?? null) as T | null;
-};
-
-const execute = async (
-  query: PromiseLike<{ error: { message: string } | null }>,
-  label: string
-): Promise<void> => {
-  const { error } = await query;
-
-  if (error) {
-    throw new Error(`${label} failed: ${error.message}`);
-  }
-};
+  return db;
+}
 
 function normalizeAlias(alias: string): string {
   return alias.trim().toLowerCase().replace(/\s+/g, "-");
 }
 
-function escapeIlike(value: string): string {
-  return value.replaceAll("%", "\\%").replaceAll("_", "\\_");
+function escapeLike(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function seedMemoryStore(): void {

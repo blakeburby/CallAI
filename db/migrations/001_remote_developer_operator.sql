@@ -128,6 +128,7 @@ create table if not exists chat_channels (
 );
 
 create index if not exists tasks_status_created_at_idx on tasks(status, created_at);
+create index if not exists execution_runs_task_started_at_idx on execution_runs(task_id, started_at desc nulls last);
 create index if not exists audit_events_task_created_at_idx on audit_events(task_id, created_at desc);
 create index if not exists audit_events_session_created_at_idx on audit_events(session_id, created_at desc);
 create index if not exists confirmation_requests_status_expires_at_idx on confirmation_requests(status, expires_at);

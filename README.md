@@ -1,6 +1,6 @@
 # CallAI Remote Developer Operator
 
-CallAI is a Vapi-powered voice control plane for remote developer operations. The Vercel app hosts the browser voice console, Vapi tool endpoints, webhook receiver, task APIs, and audit views. Long-running repo work runs in a persistent `agent-runner` process that claims queued tasks from Supabase and delegates coding work to Codex CLI or Codex Cloud.
+CallAI is a Vapi-powered voice control plane for remote developer operations. The Vercel app hosts the browser voice console, Vapi tool endpoints, webhook receiver, task APIs, and audit views. Long-running repo work runs in a persistent Railway `agent-runner` worker that claims queued tasks from Railway Postgres and delegates coding work to Codex CLI or Codex Cloud.
 
 ## Architecture
 
@@ -11,8 +11,8 @@ flowchart LR
   Browser["Operator console"] --> API
   API --> Parser["task-parser"]
   Parser --> Memory["context-memory"]
-  API --> Supabase["Supabase tasks and audit log"]
-  Runner["agent-runner"] --> Supabase
+  API --> RailwayDB["Railway Postgres tasks and audit log"]
+  Runner["Railway agent-runner"] --> RailwayDB
   Runner --> Repo["Repo workspace"]
   Runner --> Codex["codex-bridge"]
   Codex --> Repo
@@ -44,8 +44,8 @@ npm run runner
 ## Required Production Services
 
 - Vercel hosts the public Express API and built Vite frontend.
-- Supabase stores sessions, transcripts, tasks, execution runs, confirmations, and audit events.
-- A persistent runner runs on a trusted machine with Codex CLI authenticated and repo workspace access.
+- Railway Postgres stores sessions, transcripts, tasks, execution runs, confirmations, and audit events.
+- A persistent Railway worker runs with Codex CLI authenticated and repo workspace access.
 - Vapi routes browser, inbound, and outbound voice calls to the deployed server URLs.
 
 ## Vapi Tool Endpoints
@@ -73,22 +73,45 @@ curl -X POST https://YOUR_SERVER_URL/voice/calls/outbound \
   -d '{"phone_number":"+15551234567","reason":"Task update"}'
 ```
 
-## Supabase
+## Railway Postgres
 
-Apply the migration in `supabase/migrations/20260420000000_remote_developer_operator.sql`.
+Create a Railway project, add a Postgres service, and copy its connection string into `DATABASE_URL`.
 
-Use service-role credentials only on the backend and runner:
+Use Railway's public Postgres URL in Vercel production env so the public API can read and write tasks. Use Railway's private/internal Postgres URL for the Railway worker when available.
+
+Run the generic Postgres migration once:
 
 ```bash
-SUPABASE_URL=...
-SUPABASE_SERVICE_ROLE_KEY=...
+DATABASE_URL=postgresql://... npm run db:migrate
+DATABASE_URL=postgresql://... npm run db:seed
 ```
 
-The browser never receives Supabase service credentials, OpenAI keys, Vapi private keys, or tool secrets.
+The migration lives at `db/migrations/001_remote_developer_operator.sql`.
+The seed command inserts the default repo and aliases from `DEFAULT_REPO_*`.
+
+The browser never receives `DATABASE_URL`, OpenAI keys, Vapi private keys, or tool secrets.
+
+## Railway Worker
+
+Deploy a second Railway service from this same GitHub repo as a worker. Set the start command to:
+
+```bash
+npm run runner
+```
+
+The checked-in `railway.toml` sets that worker command. Configure the worker with:
+
+- `DATABASE_URL`
+- `DATABASE_SSL=auto`
+- `OPENAI_API_KEY`
+- `CODEX_EXECUTABLE=codex`
+- `CODEX_EXECUTION_MODE=local`
+- `DEFAULT_REPO_OWNER`, `DEFAULT_REPO_NAME`, `DEFAULT_REPO_URL`, `DEFAULT_REPO_PATH`, and `DEFAULT_REPO_BRANCH`
+- any GitHub/Codex auth variables needed for non-interactive repo work
 
 ## Runner
 
-The runner polls for `tasks.status = 'queued'`, claims one task, creates an execution run, and then:
+The runner logs a startup preflight for database connectivity, `codex --version`, and workspace settings. Then it polls for `tasks.status = 'queued'`, atomically claims one task with `FOR UPDATE SKIP LOCKED`, creates an execution run, and:
 
 - inspects repos directly for read-only tasks
 - runs configured package tests for test tasks
@@ -96,7 +119,7 @@ The runner polls for `tasks.status = 'queued'`, claims one task, creates an exec
 - delegates code edits to `codex exec --json --sandbox workspace-write --cd <repo>`
 - writes progress, stdout, stderr, diffs, and final summaries to the audit log
 
-The runner does not commit, push, merge, deploy, or change secrets without separate approval.
+If Codex CLI or auth is missing, coding tasks are marked `blocked` with an audit event. The runner does not commit, push, merge, deploy, or change secrets without separate approval.
 
 ## Safety Model
 

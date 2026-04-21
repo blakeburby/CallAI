@@ -91,6 +91,7 @@ const runProcess = async (input: {
   eventPrefix: string;
 }): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
+    let stderrTail = "";
     const child = spawn(input.command, input.args, {
       cwd: input.cwd,
       env: process.env,
@@ -109,6 +110,7 @@ const runProcess = async (input: {
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
+      stderrTail = `${stderrTail}${chunk.toString("utf8")}`.slice(-4000);
       void auditLog.log({
         task_id: input.taskId,
         run_id: input.runId,
@@ -121,7 +123,7 @@ const runProcess = async (input: {
     });
 
     child.on("error", (error) => {
-      reject(error);
+      reject(new Error(`${input.command} failed to start: ${error.message}`));
     });
 
     child.on("close", (code) => {
@@ -130,7 +132,12 @@ const runProcess = async (input: {
         return;
       }
 
-      reject(new Error(`${input.command} exited with code ${code ?? "unknown"}.`));
+      const stderr = stderrTail.trim();
+      reject(
+        new Error(
+          `${input.command} exited with code ${code ?? "unknown"}.${stderr ? ` ${stderr}` : ""}`
+        )
+      );
     });
   });
 };

@@ -1,5 +1,4 @@
 %PDF-1.4
-%‚„œ”
 1 0 obj
 << /Type /Catalog /Pages 2 0 R >>
 endobj
@@ -13,146 +12,142 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
 endobj
 5 0 obj
-<< /Length 3081 >>
+<< /Length 3801 >>
 stream
 BT /F2 18 Tf 54 744 Td (CallAI Remote Developer Operator Setup Directions) Tj ET
-BT /F1 10 Tf 54 726 Td (Remaining steps to turn the implemented local code into the deployed voice-to-Codex operator) Tj ET
-BT /F1 10 Tf 54 712 Td (system.) Tj ET
-BT /F2 13 Tf 54 690 Td (1. Review, Commit, And Push The Code) Tj ET
-BT /F1 10 Tf 54 668 Td (- The CallAI Remote Developer Operator implementation exists locally but is not committed) Tj ET
-BT /F1 10 Tf 54 654 Td (  yet.) Tj ET
-BT /F1 10 Tf 54 640 Td (- Review the changed files, then commit and push the operator upgrade before deploying.) Tj ET
-BT /F1 10 Tf 54 626 Td (- Suggested commands:) Tj ET
-BT /F1 10 Tf 54 612 Td (- git status --short) Tj ET
-BT /F1 10 Tf 54 598 Td (- git diff --stat) Tj ET
-BT /F1 10 Tf 54 584 Td (- git add .) Tj ET
-BT /F1 10 Tf 54 570 Td (- git commit -m "Build CallAI remote developer operator") Tj ET
-BT /F1 10 Tf 54 556 Td (- git push origin main) Tj ET
-BT /F2 13 Tf 54 530 Td (2. Rotate The Exposed OpenAI API Key) Tj ET
-BT /F1 10 Tf 54 508 Td (- An OpenAI API key was pasted into chat earlier. Treat it as exposed.) Tj ET
-BT /F1 10 Tf 54 494 Td (- Revoke or rotate it in the OpenAI dashboard, then update local and Vercel environment) Tj ET
-BT /F1 10 Tf 54 480 Td (  variables with the new key.) Tj ET
-BT /F1 10 Tf 54 466 Td (- Do not put real secret values in the repo, screenshots, PDFs, or Vapi public browser) Tj ET
-BT /F1 10 Tf 54 452 Td (  config.) Tj ET
-BT /F2 13 Tf 54 426 Td (3. Create Or Apply Supabase) Tj ET
-BT /F1 10 Tf 54 404 Td (- Create or open your Supabase project.) Tj ET
-BT /F1 10 Tf 54 390 Td (- Apply the migration file:) Tj ET
-BT /F1 10 Tf 54 376 Td (- supabase/migrations/20260420000000_remote_developer_operator.sql) Tj ET
-BT /F1 10 Tf 54 362 Td (- Copy these backend-only values after setup:) Tj ET
-BT /F1 10 Tf 54 348 Td (- SUPABASE_URL) Tj ET
-BT /F1 10 Tf 54 334 Td (- SUPABASE_SERVICE_ROLE_KEY) Tj ET
-BT /F2 13 Tf 54 308 Td (4. Add Required Environment Variables) Tj ET
-BT /F1 10 Tf 54 286 Td (- Set these locally in .env and in Vercel production environment variables:) Tj ET
-BT /F1 10 Tf 54 272 Td (- OPENAI_API_KEY) Tj ET
-BT /F1 10 Tf 54 258 Td (- API_SECRET_KEY) Tj ET
-BT /F1 10 Tf 54 244 Td (- FRONTEND_PASSCODE=Blake22) Tj ET
-BT /F1 10 Tf 54 230 Td (- VAPI_API_KEY) Tj ET
-BT /F1 10 Tf 54 216 Td (- VAPI_PUBLIC_KEY) Tj ET
-BT /F1 10 Tf 54 202 Td (- VAPI_ASSISTANT_ID) Tj ET
-BT /F1 10 Tf 54 188 Td (- VAPI_PHONE_NUMBER_ID) Tj ET
-BT /F1 10 Tf 54 174 Td (- SUPABASE_URL) Tj ET
-BT /F1 10 Tf 54 160 Td (- SUPABASE_SERVICE_ROLE_KEY) Tj ET
-BT /F1 10 Tf 54 146 Td (- Optional but useful runner/repo defaults:) Tj ET
-BT /F1 10 Tf 54 132 Td (- DEFAULT_REPO_OWNER, DEFAULT_REPO_NAME, DEFAULT_REPO_URL, DEFAULT_REPO_PATH,) Tj ET
-BT /F1 10 Tf 54 118 Td (  DEFAULT_REPO_BRANCH, DEFAULT_REPO_ALIASES) Tj ET
-BT /F1 10 Tf 54 104 Td (- CODEX_EXECUTABLE, CODEX_EXECUTION_MODE, RUNNER_ID, RUNNER_POLL_INTERVAL_MS,) Tj ET
-BT /F1 10 Tf 54 90 Td (  RUNNER_TEST_TIMEOUT_MS, CHAT_WEBHOOK_URL) Tj ET
-BT /F1 8 Tf 54 28 Td (Generated for CallAI setup - no secret values included | Page 1 of 3) Tj ET
+BT /F1 10 Tf 54 720 Td (This checklist covers the remaining production setup after moving persistence and the) Tj ET
+BT /F1 10 Tf 54 706 Td (long-running runner to Railway. It references environment variable names only; no secret) Tj ET
+BT /F1 10 Tf 54 692 Td (values are included.) Tj ET
+BT /F2 12 Tf 54 673 Td (1. Review, Commit, And Push Current Changes) Tj ET
+BT /F1 10 Tf 54 656 Td (- Review the local diff in /Users/blakeburby/Desktop/CallAI-main.) Tj ET
+BT /F1 10 Tf 54 639 Td (- Confirm the Railway migration changed persistence from Supabase to) Tj ET
+BT /F1 10 Tf 54 625 Td (  DATABASE_URL/Postgres.) Tj ET
+BT /F1 10 Tf 54 608 Td (- Run npm install, npm run build, and a local smoke test before committing.) Tj ET
+BT /F1 10 Tf 54 591 Td (- Commit and push the branch to GitHub when the build is clean.) Tj ET
+BT /F2 12 Tf 54 574 Td (2. Rotate The Exposed OpenAI Key) Tj ET
+BT /F1 10 Tf 54 557 Td (- Open the OpenAI dashboard, revoke the key that was pasted in chat, and create a new) Tj ET
+BT /F1 10 Tf 54 543 Td (  key.) Tj ET
+BT /F1 10 Tf 54 526 Td (- Update OPENAI_API_KEY in local .env, Vercel production env, and Railway worker env.) Tj ET
+BT /F1 10 Tf 54 509 Td (- Do this before relying on production calls; leaked keys can be abused for API usage.) Tj ET
+BT /F2 12 Tf 54 492 Td (3. Create Railway Postgres) Tj ET
+BT /F1 10 Tf 54 475 Td (- In Railway, create or select the CallAI project.) Tj ET
+BT /F1 10 Tf 54 458 Td (- Add a Postgres service.) Tj ET
+BT /F1 10 Tf 54 441 Td (- Copy the public Postgres connection string for Vercel and the private/internal) Tj ET
+BT /F1 10 Tf 54 427 Td (  connection string for the Railway worker when available.) Tj ET
+BT /F1 10 Tf 54 410 Td (- Use DATABASE_SSL=auto. The app disables SSL for railway.internal and uses SSL for) Tj ET
+BT /F1 10 Tf 54 396 Td (  public database URLs.) Tj ET
+BT /F2 12 Tf 54 379 Td (4. Apply And Seed The Database) Tj ET
+BT /F1 10 Tf 54 362 Td (- Run DATABASE_URL=<railway-postgres-url> npm run db:migrate locally or as a Railway) Tj ET
+BT /F1 10 Tf 54 348 Td (  one-off command.) Tj ET
+BT /F1 10 Tf 54 331 Td (- Then run DATABASE_URL=<railway-postgres-url> npm run db:seed to insert the default) Tj ET
+BT /F1 10 Tf 54 317 Td (  repo and repo aliases from DEFAULT_REPO_*.) Tj ET
+BT /F1 10 Tf 54 300 Td (- Confirm these tables exist: tasks, execution_runs, audit_events, voice_sessions,) Tj ET
+BT /F1 10 Tf 54 286 Td (  confirmation_requests, repos, repo_aliases, transcripts, memories, and) Tj ET
+BT /F1 10 Tf 54 272 Td (  chat_channels.) Tj ET
+BT /F1 10 Tf 54 255 Td (- No Supabase migration is needed after this cutover.) Tj ET
+BT /F2 12 Tf 54 238 Td (5. Add Required Environment Variables) Tj ET
+BT /F1 10 Tf 54 221 Td (Local .env, Vercel, and Railway should use the same names where applicable.) Tj ET
+BT /F1 10 Tf 54 202 Td (- Vercel: OPENAI_API_KEY, API_SECRET_KEY, FRONTEND_PASSCODE, VAPI_PUBLIC_KEY,) Tj ET
+BT /F1 10 Tf 54 188 Td (  VAPI_API_KEY, VAPI_ASSISTANT_ID, VAPI_PHONE_NUMBER_ID, VAPI_WEBHOOK_SECRET,) Tj ET
+BT /F1 10 Tf 54 174 Td (  DATABASE_URL, DATABASE_SSL=auto.) Tj ET
+BT /F1 10 Tf 54 157 Td (- Railway worker: DATABASE_URL, DATABASE_SSL=auto, OPENAI_API_KEY,) Tj ET
+BT /F1 10 Tf 54 143 Td (  CODEX_EXECUTABLE=codex, CODEX_EXECUTION_MODE=local, RUNNER_ID,) Tj ET
+BT /F1 10 Tf 54 129 Td (  RUNNER_POLL_INTERVAL_MS, DEFAULT_REPO_OWNER, DEFAULT_REPO_NAME, DEFAULT_REPO_URL,) Tj ET
+BT /F1 10 Tf 54 115 Td (  DEFAULT_REPO_PATH, DEFAULT_REPO_BRANCH, DEFAULT_REPO_ALIASES, and non-interactive) Tj ET
+BT /F1 10 Tf 54 101 Td (  GitHub/Codex auth variables.) Tj ET
+BT /F1 10 Tf 54 84 Td (- Browser clients must never receive OPENAI_API_KEY, API_SECRET_KEY, VAPI_API_KEY, or) Tj ET
+BT /F1 10 Tf 54 70 Td (  DATABASE_URL.) Tj ET
 endstream
 endobj
 6 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 5 0 R >>
 endobj
 7 0 obj
-<< /Length 3614 >>
+<< /Length 3629 >>
 stream
-BT /F2 13 Tf 54 744 Td (5. Deploy The Vercel Control Plane) Tj ET
-BT /F1 10 Tf 54 722 Td (- After the code is pushed and Vercel env vars are set, deploy production:) Tj ET
-BT /F1 10 Tf 54 708 Td (- npm run build) Tj ET
-BT /F1 10 Tf 54 694 Td (- vercel --prod) Tj ET
-BT /F1 10 Tf 54 680 Td (- Confirm the app loads at https://callai-iota.vercel.app and that /health returns ok.) Tj ET
-BT /F2 13 Tf 54 654 Td (6. Replace Old Vapi Trading Tools) Tj ET
-BT /F1 10 Tf 54 632 Td (- Remove the old trading tools from the Vapi assistant.) Tj ET
-BT /F1 10 Tf 54 618 Td (- Paste the new developer-operator tool definitions from:) Tj ET
-BT /F1 10 Tf 54 604 Td (- src/definitions/toolDefinitions.ts) Tj ET
-BT /F1 10 Tf 54 590 Td (- Configure these tool URLs on the deployed server:) Tj ET
-BT /F1 10 Tf 54 576 Td (- create_task -> POST https://callai-iota.vercel.app/tools/create-task) Tj ET
-BT /F1 10 Tf 54 562 Td (- get_task_status -> POST https://callai-iota.vercel.app/tools/get-task-status) Tj ET
-BT /F1 10 Tf 54 548 Td (- continue_task -> POST https://callai-iota.vercel.app/tools/continue-task) Tj ET
-BT /F1 10 Tf 54 534 Td (- approve_action -> POST https://callai-iota.vercel.app/tools/approve-action) Tj ET
-BT /F1 10 Tf 54 520 Td (- cancel_task -> POST https://callai-iota.vercel.app/tools/cancel-task) Tj ET
-BT /F1 10 Tf 54 506 Td (- send_project_update -> POST https://callai-iota.vercel.app/tools/send-project-update) Tj ET
-BT /F1 10 Tf 54 492 Td (- start_outbound_call -> POST https://callai-iota.vercel.app/tools/start-outbound-call) Tj ET
-BT /F2 13 Tf 54 466 Td (7. Configure Vapi Webhook And Auth Headers) Tj ET
-BT /F1 10 Tf 54 444 Td (- For every Vapi tool request, set headers:) Tj ET
-BT /F1 10 Tf 54 430 Td (- x-api-key: <same value as API_SECRET_KEY>) Tj ET
-BT /F1 10 Tf 54 416 Td (- Content-Type: application/json) Tj ET
-BT /F1 10 Tf 54 402 Td (- Configure the Vapi webhook URL:) Tj ET
-BT /F1 10 Tf 54 388 Td (- POST https://callai-iota.vercel.app/vapi/webhook) Tj ET
-BT /F1 10 Tf 54 374 Td (- If VAPI_WEBHOOK_SECRET is set, configure Vapi to send the same value as a webhook secret) Tj ET
-BT /F1 10 Tf 54 360 Td (  header or bearer token.) Tj ET
-BT /F2 13 Tf 54 334 Td (8. Set Up The Persistent Runner) Tj ET
-BT /F1 10 Tf 54 312 Td (- Vercel receives voice calls, tools, webhooks, and console requests. It should not run) Tj ET
-BT /F1 10 Tf 54 298 Td (  multi-minute coding jobs.) Tj ET
-BT /F1 10 Tf 54 284 Td (- Run the persistent worker on a trusted always-on machine such as your Mac while awake, a) Tj ET
-BT /F1 10 Tf 54 270 Td (  Mac mini, a VPS, Railway, Render, or Fly.io.) Tj ET
-BT /F1 10 Tf 54 256 Td (- Runner setup:) Tj ET
-BT /F1 10 Tf 54 242 Td (- git clone https://github.com/blakeburby/CallAI.git) Tj ET
-BT /F1 10 Tf 54 228 Td (- cd CallAI) Tj ET
-BT /F1 10 Tf 54 214 Td (- npm install) Tj ET
-BT /F1 10 Tf 54 200 Td (- codex login) Tj ET
-BT /F1 10 Tf 54 186 Td (- npm run runner) Tj ET
-BT /F1 10 Tf 54 172 Td (- The runner needs Supabase env vars, repo workspace access, Codex CLI authentication, and) Tj ET
-BT /F1 10 Tf 54 158 Td (  Git/GitHub credentials if it will later commit, push, or open PRs.) Tj ET
-BT /F2 13 Tf 54 132 Td (9. Seed Repo Aliases And Memory) Tj ET
-BT /F1 10 Tf 54 110 Td (- Add real repos and aliases to Supabase so voice phrases resolve safely.) Tj ET
-BT /F1 10 Tf 54 96 Td (- Examples: main repo, CallAI, dashboard repo, current repo, project chat.) Tj ET
-BT /F1 10 Tf 54 82 Td (- Without seeded repo records, the app can only use its local fallback repo context.) Tj ET
-BT /F1 8 Tf 54 28 Td (Generated for CallAI setup - no secret values included | Page 2 of 3) Tj ET
+BT /F2 12 Tf 54 744 Td (6. Deploy The Vercel Control Plane) Tj ET
+BT /F1 10 Tf 54 727 Td (- Keep https://callai-iota.vercel.app as the public app, API, Vapi tool server, and) Tj ET
+BT /F1 10 Tf 54 713 Td (  webhook receiver.) Tj ET
+BT /F1 10 Tf 54 696 Td (- Add Railway public DATABASE_URL to Vercel production env.) Tj ET
+BT /F1 10 Tf 54 679 Td (- Redeploy production and verify /health returns {"status":"ok"}.) Tj ET
+BT /F1 10 Tf 54 662 Td (- After Railway persistence is verified, remove unused Supabase variables from Vercel.) Tj ET
+BT /F2 12 Tf 54 645 Td (7. Configure The Railway Worker) Tj ET
+BT /F1 10 Tf 54 628 Td (- Create a Railway worker service from the blakeburby/CallAI GitHub repo.) Tj ET
+BT /F1 10 Tf 54 611 Td (- Set the start command to npm run runner. The included railway.toml also declares) Tj ET
+BT /F1 10 Tf 54 597 Td (  this command.) Tj ET
+BT /F1 10 Tf 54 580 Td (- No public Railway domain is needed for the worker.) Tj ET
+BT /F1 10 Tf 54 563 Td (- Confirm logs show database connectivity, codex --version, and workspace settings) Tj ET
+BT /F1 10 Tf 54 549 Td (  during preflight.) Tj ET
+BT /F1 10 Tf 54 532 Td (- If Codex auth is missing, coding tasks should become blocked with an audit event) Tj ET
+BT /F1 10 Tf 54 518 Td (  instead of silently failing.) Tj ET
+BT /F2 12 Tf 54 501 Td (8. Replace Old Vapi Trading Tools) Tj ET
+BT /F1 10 Tf 54 484 Td (- Remove the old trading-centered Vapi tools.) Tj ET
+BT /F1 10 Tf 54 467 Td (- Register developer-operator tools: create_task, get_task_status, continue_task,) Tj ET
+BT /F1 10 Tf 54 453 Td (  approve_action, cancel_task, send_project_update, and start_outbound_call.) Tj ET
+BT /F1 10 Tf 54 436 Td (- Keep tool URLs pointed at https://callai-iota.vercel.app/tools/*.) Tj ET
+BT /F2 12 Tf 54 419 Td (9. Configure Vapi Webhook And Tool Headers) Tj ET
+BT /F1 10 Tf 54 402 Td (- Set the webhook URL to POST https://callai-iota.vercel.app/vapi/webhook.) Tj ET
+BT /F1 10 Tf 54 385 Td (- Set each Vapi tool request header to x-api-key: <same value as API_SECRET_KEY> and) Tj ET
+BT /F1 10 Tf 54 371 Td (  Content-Type: application/json.) Tj ET
+BT /F1 10 Tf 54 354 Td (- For inbound calls, attach the assistant to the Vapi phone number. For outbound) Tj ET
+BT /F1 10 Tf 54 340 Td (  calls, ensure VAPI_API_KEY, VAPI_ASSISTANT_ID, and VAPI_PHONE_NUMBER_ID are set) Tj ET
+BT /F1 10 Tf 54 326 Td (  server-side.) Tj ET
+BT /F2 12 Tf 54 309 Td (10. Seed Repo Aliases And Memory) Tj ET
+BT /F1 10 Tf 54 292 Td (- Use npm run db:seed after setting DEFAULT_REPO_* to insert the default repo and) Tj ET
+BT /F1 10 Tf 54 278 Td (  aliases into Railway Postgres.) Tj ET
+BT /F1 10 Tf 54 261 Td (- Add any extra repo_aliases such as dashboard repo or project-specific names.) Tj ET
+BT /F1 10 Tf 54 244 Td (- Set local_path to the path the Railway worker can access, or configure a) Tj ET
+BT /F1 10 Tf 54 230 Td (  clone/workspace path used by the runner.) Tj ET
+BT /F1 10 Tf 54 213 Td (- Keep ambiguous aliases out until the assistant has enough context to ask a) Tj ET
+BT /F1 10 Tf 54 199 Td (  confirmation question.) Tj ET
+BT /F2 12 Tf 54 182 Td (11. End-To-End Test Checklist) Tj ET
+BT /F1 10 Tf 54 165 Td (- Run npm install and npm run build locally.) Tj ET
+BT /F1 10 Tf 54 148 Td (- Run DATABASE_URL=<railway-postgres-url> npm run db:migrate and npm run db:seed.) Tj ET
+BT /F1 10 Tf 54 131 Td (- Verify /health on Vercel.) Tj ET
+BT /F1 10 Tf 54 114 Td (- Verify unauthenticated /tools/create-task returns 401.) Tj ET
+BT /F1 10 Tf 54 97 Td (- Create an authenticated create_task request and confirm it appears in Railway) Tj ET
+BT /F1 10 Tf 54 83 Td (  Postgres.) Tj ET
 endstream
 endobj
 8 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 7 0 R >>
 endobj
 9 0 obj
-<< /Length 1025 >>
+<< /Length 867 >>
 stream
-BT /F2 13 Tf 54 744 Td (10. End-To-End Test Checklist) Tj ET
-BT /F1 10 Tf 54 722 Td (- Open https://callai-iota.vercel.app.) Tj ET
-BT /F1 10 Tf 54 708 Td (- Log in with Blake22.) Tj ET
-BT /F1 10 Tf 54 694 Td (- Create a typed task: Inspect the main repo and summarize it.) Tj ET
-BT /F1 10 Tf 54 680 Td (- Confirm the task appears in the queue.) Tj ET
-BT /F1 10 Tf 54 666 Td (- Start the runner and verify it claims and completes the task.) Tj ET
-BT /F1 10 Tf 54 652 Td (- Start a browser voice call and say the same request naturally.) Tj ET
-BT /F1 10 Tf 54 638 Td (- Ask for a risky operation, such as deleting files or force pushing, and confirm it creates) Tj ET
-BT /F1 10 Tf 54 624 Td (  an approval request instead of executing immediately.) Tj ET
-BT /F1 10 Tf 54 610 Td (- Review the audit timeline for transcript, task interpretation, tool calls, runner status,) Tj ET
-BT /F1 10 Tf 54 596 Td (  and final summary.) Tj ET
-BT /F1 8 Tf 54 28 Td (Generated for CallAI setup - no secret values included | Page 3 of 3) Tj ET
+BT /F1 10 Tf 54 744 Td (- Start the Railway worker and confirm it claims exactly one queued task.) Tj ET
+BT /F1 10 Tf 54 727 Td (- Create a read-only repo inspection task and confirm it succeeds.) Tj ET
+BT /F1 10 Tf 54 710 Td (- Create a safe-write task and confirm it creates or attempts a callai/* branch, then) Tj ET
+BT /F1 10 Tf 54 696 Td (  blocks cleanly if repo or Codex auth is missing.) Tj ET
+BT /F1 10 Tf 54 679 Td (- Log into https://callai-iota.vercel.app with FRONTEND_PASSCODE and confirm tasks,) Tj ET
+BT /F1 10 Tf 54 665 Td (  confirmations, and audit events appear.) Tj ET
+BT /F1 10 Tf 54 648 Td (- Start a Vapi browser or phone call and ask the assistant to inspect a repo; verify) Tj ET
+BT /F1 10 Tf 54 634 Td (  Vercel receives the tool call, Railway Postgres stores it, and the Railway worker) Tj ET
+BT /F1 10 Tf 54 620 Td (  processes it.) Tj ET
 endstream
 endobj
 10 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 9 0 R >>
 endobj
 11 0 obj
-<< /Title (CallAI Remote Developer Operator Setup Directions) /Author (CallAI) /Subject (Setup directions) >>
+<< /Title (CallAI Remote Developer Operator Setup Directions) /Creator (CallAI self-contained Python PDF writer) >>
 endobj
 xref
 0 12
 0000000000 65535 f 
-0000000015 00000 n 
-0000000064 00000 n 
-0000000134 00000 n 
-0000000204 00000 n 
-0000000279 00000 n 
-0000003412 00000 n 
-0000003548 00000 n 
-0000007214 00000 n 
-0000007350 00000 n 
-0000008427 00000 n 
-0000008564 00000 n 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000128 00000 n 
+0000000198 00000 n 
+0000000273 00000 n 
+0000004126 00000 n 
+0000004262 00000 n 
+0000007943 00000 n 
+0000008079 00000 n 
+0000008997 00000 n 
+0000009134 00000 n 
 trailer
 << /Size 12 /Root 1 0 R /Info 11 0 R >>
 startxref
-8690
+9266
 %%EOF

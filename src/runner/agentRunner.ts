@@ -1,8 +1,16 @@
 import "dotenv/config";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { auditLog } from "../modules/audit-log/auditLogService.js";
 import { executionEngine } from "../modules/execution-engine/executionEngine.js";
-import { database, isSupabaseConfigured } from "../services/dbService.js";
+import {
+  checkDatabaseConnection,
+  database,
+  isDatabaseConfigured
+} from "../services/dbService.js";
 import { logger } from "../utils/logger.js";
+
+const execFileAsync = promisify(execFile);
 
 const runnerId =
   process.env.RUNNER_ID ||
@@ -14,8 +22,10 @@ let stopping = false;
 const main = async (): Promise<void> => {
   logger.info("CallAI agent runner starting", {
     runner_id: runnerId,
-    supabase: isSupabaseConfigured() ? "configured" : "memory"
+    database: isDatabaseConfigured() ? "configured" : "memory"
   });
+
+  await logPreflight();
 
   await auditLog.log({
     event_type: "runner.started",
@@ -68,6 +78,56 @@ const main = async (): Promise<void> => {
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+const logPreflight = async (): Promise<void> => {
+  const databaseHealth = await checkDatabaseConnection();
+  const codexHealth = await checkCodexVersion();
+  const payload = {
+    runner_id: runnerId,
+    database: databaseHealth,
+    codex: codexHealth,
+    workspace: {
+      default_repo_owner: process.env.DEFAULT_REPO_OWNER || null,
+      default_repo_name: process.env.DEFAULT_REPO_NAME || null,
+      default_repo_path: process.env.DEFAULT_REPO_PATH || process.cwd(),
+      code_execution_mode: process.env.CODEX_EXECUTION_MODE || "local"
+    }
+  };
+
+  logger.info("Runner preflight complete", payload);
+  await auditLog.log({
+    event_type: "runner.preflight",
+    severity: databaseHealth.ok && codexHealth.ok ? "info" : "warn",
+    payload
+  });
+};
+
+const checkCodexVersion = async (): Promise<{
+  ok: boolean;
+  executable: string;
+  version?: string;
+  error?: string;
+}> => {
+  const executable = process.env.CODEX_EXECUTABLE || "codex";
+
+  try {
+    const { stdout, stderr } = await execFileAsync(executable, ["--version"], {
+      timeout: 10000
+    });
+    const version = (stdout || stderr).trim();
+    return {
+      ok: true,
+      executable,
+      version: version || "version output was empty"
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      executable,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+};
 
 process.on("SIGINT", () => {
   stopping = true;
