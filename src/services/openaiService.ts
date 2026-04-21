@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { OpenAI } from "openai";
 
 const VOICE_SUMMARY_SYSTEM_PROMPT =
   "You are a remote developer operations assistant. Convert JSON task or execution data into one concise spoken sentence. No markdown. No numbers beyond 2 decimal places. Sound natural, not robotic. Never read secrets aloud.";
