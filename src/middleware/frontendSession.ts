@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { NextFunction, Request, Response } from "express";
+import type { CookieOptions, NextFunction, Request, Response } from "express";
 
 const SESSION_COOKIE = "callai_frontend_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
@@ -40,7 +40,7 @@ export const isFrontendAuthenticated = (request: Request): boolean => {
 
 export const createFrontendSessionCookie = (
   passcode: string
-): { name: string; value: string; options: ReturnType<typeof frontendCookieOptions> } => {
+): { name: string; value: string; options: CookieOptions } => {
   const expiresAt = String(Date.now() + SESSION_TTL_MS);
   const nonce = randomBytes(16).toString("base64url");
 
@@ -54,7 +54,7 @@ export const createFrontendSessionCookie = (
   };
 };
 
-export const frontendCookieOptions = () => ({
+export const frontendCookieOptions = (): CookieOptions => ({
   httpOnly: true,
   path: "/",
   sameSite: "lax" as const,
