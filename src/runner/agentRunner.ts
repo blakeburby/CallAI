@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { execFile } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import { promisify } from "node:util";
 import { auditLog } from "../modules/audit-log/auditLogService.js";
 import { executionEngine } from "../modules/execution-engine/executionEngine.js";
@@ -18,6 +19,7 @@ const runnerId =
 const pollIntervalMs = Number(process.env.RUNNER_POLL_INTERVAL_MS ?? 5000);
 
 let stopping = false;
+let healthServer: Server | null = null;
 
 const main = async (): Promise<void> => {
   logger.info("CallAI agent runner starting", {
@@ -25,6 +27,7 @@ const main = async (): Promise<void> => {
     database: isDatabaseConfigured() ? "configured" : "memory"
   });
 
+  healthServer = startHealthServer();
   await logPreflight();
 
   await auditLog.log({
@@ -74,10 +77,53 @@ const main = async (): Promise<void> => {
       runner_id: runnerId
     }
   });
+
+  healthServer?.close();
 };
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+const startHealthServer = (): Server | null => {
+  if (process.env.RUNNER_DISABLE_HEALTH_SERVER === "true") {
+    return null;
+  }
+
+  const configuredPort = process.env.RUNNER_HEALTH_PORT || process.env.PORT;
+
+  if (!configuredPort) {
+    return null;
+  }
+
+  const port = Number(configuredPort);
+
+  if (!Number.isFinite(port) || port <= 0) {
+    logger.warn("Runner health server disabled because port is invalid", {
+      port: configuredPort
+    });
+    return null;
+  }
+
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        status: "ok",
+        runner_id: runnerId
+      })
+    );
+  });
+
+  server.on("error", (error) => {
+    logger.error("Runner health server error", { error: error.message });
+  });
+
+  server.listen(port, () => {
+    logger.info("Runner health server listening", { port });
+  });
+
+  return server;
+};
 
 const logPreflight = async (): Promise<void> => {
   const databaseHealth = await checkDatabaseConnection();
