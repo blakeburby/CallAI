@@ -20,7 +20,18 @@ const developerTaskSchema = z
     instructions: z.string().min(3).max(5000),
     acceptanceCriteria: z.array(z.string().min(1).max(280)).min(1).max(8),
     chatTarget: z.string().min(1).max(140).optional(),
-    confidence: z.number().min(0).max(1)
+    confidence: z.number().min(0).max(1),
+    postApprovalAction: z
+      .object({
+        action: z.enum(["commit_changes", "open_pull_request"]),
+        branchName: z.string().min(1).max(180).optional(),
+        commitMessage: z.string().min(1).max(180).optional(),
+        pullRequestTitle: z.string().min(1).max(180).optional(),
+        pullRequestBody: z.string().min(1).max(4000).optional(),
+        draft: z.boolean().optional()
+      })
+      .strict()
+      .optional()
   })
   .strict();
 

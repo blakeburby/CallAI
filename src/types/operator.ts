@@ -57,6 +57,14 @@ export type DeveloperTask = {
   acceptanceCriteria: string[];
   chatTarget?: string;
   confidence: number;
+  postApprovalAction?: {
+    action: "commit_changes" | "open_pull_request";
+    branchName?: string;
+    commitMessage?: string;
+    pullRequestTitle?: string;
+    pullRequestBody?: string;
+    draft?: boolean;
+  };
 };
 
 export type RepoRecord = {

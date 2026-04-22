@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-type CommandResult = {
+export type CommandResult = {
   code: number;
   stdout: string;
   stderr: string;
@@ -47,6 +47,16 @@ export const gitService = {
     }
   },
 
+  async checkoutBranch(repoPath: string, branchName: string): Promise<void> {
+    const result = await runCommand("git", ["checkout", branchName], {
+      cwd: repoPath
+    });
+
+    if (result.code !== 0) {
+      throw new Error(result.stderr || `Could not checkout ${branchName}.`);
+    }
+  },
+
   async statusShort(repoPath: string): Promise<string> {
     const result = await runCommand("git", ["status", "--short"], {
       cwd: repoPath
@@ -61,6 +71,14 @@ export const gitService = {
     });
 
     return result.stdout.trim() || "No file changes detected.";
+  },
+
+  async stagedDiffSummary(repoPath: string): Promise<string> {
+    const result = await runCommand("git", ["diff", "--cached", "--stat"], {
+      cwd: repoPath
+    });
+
+    return result.stdout.trim() || "No staged changes detected.";
   },
 
   async recentFiles(repoPath: string, limit = 80): Promise<string[]> {
@@ -104,6 +122,114 @@ export const gitService = {
     }
 
     return null;
+  },
+
+  async commitAll(repoPath: string, message: string): Promise<string | null> {
+    const status = await gitService.statusShort(repoPath);
+
+    if (!status) {
+      return null;
+    }
+
+    const add = await runCommand("git", ["add", "-A"], { cwd: repoPath });
+
+    if (add.code !== 0) {
+      throw new Error(add.stderr || "Could not stage changes.");
+    }
+
+    const stagedSummary = await gitService.stagedDiffSummary(repoPath);
+    const commit = await runCommand("git", ["commit", "-m", message], {
+      cwd: repoPath,
+      timeoutMs: Number(process.env.RUNNER_GIT_TIMEOUT_MS ?? 180000)
+    });
+
+    if (commit.code !== 0) {
+      throw new Error(commit.stderr || "Could not commit changes.");
+    }
+
+    const hash = await runCommand("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: repoPath
+    });
+
+    return `${hash.stdout.trim() || "commit created"}\n${stagedSummary}`;
+  },
+
+  async pushBranch(repoPath: string, branchName: string): Promise<void> {
+    const result = await runCommand(
+      "git",
+      ["push", "--set-upstream", "origin", branchName],
+      {
+        cwd: repoPath,
+        timeoutMs: Number(process.env.RUNNER_GIT_TIMEOUT_MS ?? 180000)
+      }
+    );
+
+    if (result.code !== 0) {
+      throw new Error(result.stderr || `Could not push ${branchName}.`);
+    }
+  },
+
+  async createPullRequest(input: {
+    repoPath: string;
+    branchName: string;
+    baseBranch: string;
+    title: string;
+    body: string;
+    draft?: boolean;
+  }): Promise<string> {
+    const args = [
+      "pr",
+      "create",
+      "--base",
+      input.baseBranch,
+      "--head",
+      input.branchName,
+      "--title",
+      input.title,
+      "--body",
+      input.body
+    ];
+
+    if (input.draft !== false) {
+      args.push("--draft");
+    }
+
+    const result = await runCommand("gh", args, {
+      cwd: input.repoPath,
+      timeoutMs: Number(process.env.RUNNER_GIT_TIMEOUT_MS ?? 180000)
+    });
+
+    if (result.code === 0) {
+      return result.stdout.trim();
+    }
+
+    const existing = await gitService.getPullRequestUrl(input.repoPath, input.branchName);
+
+    if (existing) {
+      return existing;
+    }
+
+    throw new Error(result.stderr || "Could not create pull request.");
+  },
+
+  async getPullRequestUrl(
+    repoPath: string,
+    branchName: string
+  ): Promise<string | null> {
+    const result = await runCommand(
+      "gh",
+      ["pr", "view", branchName, "--json", "url", "--jq", ".url"],
+      {
+        cwd: repoPath,
+        timeoutMs: Number(process.env.RUNNER_GIT_TIMEOUT_MS ?? 180000)
+      }
+    );
+
+    if (result.code !== 0) {
+      return null;
+    }
+
+    return result.stdout.trim() || null;
   },
 
   runCommand
