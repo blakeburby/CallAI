@@ -8,6 +8,7 @@ export const normalizedActions = [
   "send_chat_message",
   "summarize_project",
   "query_logs",
+  "desktop_control",
   "delegate_to_codex",
   "continue_existing_task"
 ] as const;
@@ -56,6 +57,11 @@ export type DeveloperTask = {
   instructions: string;
   acceptanceCriteria: string[];
   chatTarget?: string;
+  targetApp?: "chrome";
+  url?: string;
+  riskLevel?: "low" | "needs_confirmation" | "blocked";
+  desktopMode?: "normal_chrome";
+  desktopApprovalGranted?: boolean;
   confidence: number;
   postApprovalAction?: {
     action: "commit_changes" | "open_pull_request";
@@ -89,6 +95,84 @@ export type VoiceSessionRecord = {
   ended_at: string | null;
 };
 
+export type SmsConversationRecord = {
+  id: string;
+  phone_e164: string;
+  status: string;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SmsMessageRecord = {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant" | "system";
+  body: string;
+  provider_message_sid: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type SmsWebhookAuthMode =
+  | "query_secret"
+  | "twilio_signature"
+  | "mixed"
+  | "unknown";
+
+export type SmsVerificationState = "approved" | "pending" | "rejected" | "unknown";
+export type SmsDeliveryState = "healthy" | "degraded" | "blocked" | "unknown";
+
+export type SmsConfigSummary = {
+  enabled: boolean;
+  ownerPhoneTail: string | null;
+  fromNumberTail: string | null;
+};
+
+export type SmsOverview = SmsConfigSummary & {
+  configured: boolean;
+  webhookAuthMode: SmsWebhookAuthMode;
+  verificationState: SmsVerificationState;
+  deliveryState: SmsDeliveryState;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  lastOutboundStatus: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  attention: string[];
+};
+
+export type SmsHealthMessage = {
+  sid: string | null;
+  direction: "inbound" | "outbound";
+  role: SmsMessageRecord["role"];
+  bodyPreview: string;
+  createdAt: string | null;
+  status: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  source: "conversation" | "twilio_api" | "audit";
+};
+
+export type SmsHealthData = {
+  summary: SmsOverview;
+  verification: {
+    state: SmsVerificationState;
+    source: "twilio_api" | "manual_console_required" | "not_configured";
+    detail: string;
+    checkedAt: string;
+  };
+  webhook: {
+    authMode: SmsWebhookAuthMode;
+    querySecretConfigured: boolean;
+    twilioSignatureConfigured: boolean;
+    ownerPhoneTail: string | null;
+    fromNumberTail: string | null;
+  };
+  recentMessages: SmsHealthMessage[];
+  recentFailures: SmsHealthMessage[];
+};
+
 export type DeveloperTaskRecord = {
   id: string;
   session_id: string | null;
@@ -113,6 +197,18 @@ export type ExecutionRunRecord = {
   started_at: string | null;
   finished_at: string | null;
   final_summary: string | null;
+};
+
+export type DesktopSnapshotRecord = {
+  task_id: string;
+  run_id: string | null;
+  current_url: string | null;
+  page_title: string | null;
+  latest_action: string | null;
+  step: number;
+  screenshot_data_url: string | null;
+  redacted: boolean;
+  updated_at: string;
 };
 
 export type AuditEventRecord = {

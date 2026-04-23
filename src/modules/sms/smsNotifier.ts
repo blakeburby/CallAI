@@ -45,13 +45,34 @@ const notify = async (input: {
   const safeBody = redactSensitiveText(input.body);
 
   try {
-    await smsService.sendOwnerMessage(safeBody);
+    const result = await smsService.sendOwnerMessage(safeBody);
+
+    if (!result) {
+      return;
+    }
+
+    await auditLog.log({
+      task_id: input.task.id,
+      event_type: "sms.outbound_sent",
+      payload: {
+        message_sid: result.sid,
+        owner_phone_tail: smsService.configSummary().ownerPhoneTail,
+        twilio_error_code: result.errorCode,
+        twilio_error_message: result.errorMessage,
+        twilio_status: result.status
+      }
+    });
+
     await auditLog.log({
       task_id: input.task.id,
       event_type: input.eventType,
       payload: {
         delivered: true,
-        owner_phone_tail: smsService.configSummary().ownerPhoneTail
+        message_sid: result.sid,
+        owner_phone_tail: smsService.configSummary().ownerPhoneTail,
+        twilio_error_code: result.errorCode,
+        twilio_error_message: result.errorMessage,
+        twilio_status: result.status
       }
     });
   } catch (error) {

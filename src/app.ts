@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { frontendRouter } from "./routes/frontend.js";
 import { healthRouter } from "./routes/health.js";
 import { operatorRouter } from "./routes/operator.js";
+import { publicPagesRouter } from "./routes/publicPages.js";
 import { runnerRouter } from "./routes/runner.js";
 import { smsRouter } from "./routes/sms.js";
 import { toolsRouter } from "./routes/tools.js";
@@ -23,6 +24,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
 app.use(healthRouter);
+app.use(publicPagesRouter);
 app.use(frontendRouter);
 app.use(operatorRouter);
 app.use(toolsRouter);

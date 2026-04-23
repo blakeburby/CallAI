@@ -19,6 +19,7 @@ const runnerId =
   `runner-${process.env.HOSTNAME || "local"}-${process.pid}`;
 const pollIntervalMs = Number(process.env.RUNNER_POLL_INTERVAL_MS ?? 5000);
 const taskScope = parseTaskScope(process.env.RUNNER_TASK_SCOPE);
+const desktopControlEnabled = isDesktopControlEnabled(runnerId);
 
 let stopping = false;
 let healthServer: Server | null = null;
@@ -27,6 +28,7 @@ const main = async (): Promise<void> => {
   logger.info("CallAI agent runner starting", {
     runner_id: runnerId,
     task_scope: taskScope,
+    desktop_control: desktopControlEnabled ? "enabled" : "disabled",
     database: isDatabaseConfigured() ? "configured" : "memory"
   });
 
@@ -43,7 +45,9 @@ const main = async (): Promise<void> => {
 
   while (!stopping) {
     try {
-      const claimed = await database.claimNextQueuedTask("codex_local", taskScope);
+      const claimed = await database.claimNextQueuedTask("codex_local", taskScope, {
+        allowDesktopControl: desktopControlEnabled
+      });
 
       if (!claimed) {
         await sleep(pollIntervalMs);
@@ -80,7 +84,8 @@ const main = async (): Promise<void> => {
     event_type: "runner.stopped",
     payload: {
       runner_id: runnerId,
-      task_scope: taskScope
+      task_scope: taskScope,
+      desktop_control: desktopControlEnabled
     }
   });
 
@@ -144,6 +149,7 @@ const logPreflight = async (): Promise<void> => {
       default_repo_name: process.env.DEFAULT_REPO_NAME || null,
       default_repo_path: process.env.DEFAULT_REPO_PATH || process.cwd(),
       task_scope: taskScope,
+      desktop_control: desktopControlEnabled,
       code_execution_mode: process.env.CODEX_EXECUTION_MODE || "local"
     }
   };
@@ -162,6 +168,18 @@ function parseTaskScope(value: string | undefined): RunnerTaskScope {
   }
 
   return "all";
+}
+
+function isDesktopControlEnabled(id: string): boolean {
+  if (process.env.RUNNER_ENABLE_DESKTOP_CONTROL === "true") {
+    return true;
+  }
+
+  if (process.env.RUNNER_ENABLE_DESKTOP_CONTROL === "false") {
+    return false;
+  }
+
+  return process.platform === "darwin" && id === "macbook-local-bridge";
 }
 
 const checkCodexVersion = async (): Promise<{

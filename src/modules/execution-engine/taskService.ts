@@ -21,7 +21,7 @@ const FULL_WRITE_PERMISSIONS: PermissionLevel[] = [
 export const taskService = {
   async createFromUtterance(input: CreateTaskInput): Promise<TaskCreationResult> {
     const sessionId = isUuid(input.sessionId) ? input.sessionId : undefined;
-    const interpreted = await parseDeveloperTask(input.utterance);
+    const interpreted = normalizeDesktopTask(await parseDeveloperTask(input.utterance));
     const repoResolution = await contextMemory.resolveRepo(
       interpreted,
       input.repoHint
@@ -31,12 +31,17 @@ export const taskService = {
     );
     const lowConfidence = interpreted.confidence < 0.55;
     const codeActionNeedsTarget =
-      interpreted.permissionRequired !== "read_only" && !repoResolution.repo;
+      interpreted.action !== "desktop_control" &&
+      interpreted.permissionRequired !== "read_only" &&
+      !repoResolution.repo;
+    const repoAmbiguityNeedsConfirmation =
+      interpreted.action !== "desktop_control" &&
+      repoResolution.reason === "ambiguous_repo";
     const needsConfirmation =
       permissionNeedsApproval ||
       lowConfidence ||
       codeActionNeedsTarget ||
-      repoResolution.reason === "ambiguous_repo";
+      repoAmbiguityNeedsConfirmation;
     const taskStatus = needsConfirmation ? "needs_confirmation" : "queued";
 
     const task = await database.createTask({
@@ -204,8 +209,18 @@ export const taskService = {
       };
     }
 
+    const structured = task.structured_request;
     const queued = await database.updateTask(task.id, {
-      status: "queued"
+      status: "queued",
+      ...(structured.action === "desktop_control"
+        ? {
+            structured_request: {
+              ...structured,
+              riskLevel: "low",
+              desktopApprovalGranted: true
+            }
+          }
+        : {})
     });
 
     await auditLog.log({
@@ -264,6 +279,20 @@ const requireTask = async (taskId: string): Promise<DeveloperTaskRecord> => {
   return task;
 };
 
+const normalizeDesktopTask = (task: DeveloperTask): DeveloperTask => {
+  if (task.action !== "desktop_control") {
+    return task;
+  }
+
+  return {
+    ...task,
+    targetApp: task.targetApp ?? "chrome",
+    desktopMode: task.desktopMode ?? "normal_chrome",
+    permissionRequired:
+      task.permissionRequired === "read_only" ? "safe_write" : task.permissionRequired
+  };
+};
+
 const isUuid = (value: string | undefined): value is string => {
   return Boolean(
     value &&
@@ -277,6 +306,10 @@ const buildConfirmationPrompt = (
   task: DeveloperTask,
   repoReason: string
 ): string => {
+  if (task.action === "desktop_control") {
+    return `Approve Jarvis using visible Chrome on your Mac for: ${task.title}?`;
+  }
+
   if (repoReason === "ambiguous_repo" || repoReason === "no_repos_configured") {
     return `I need a repo before I can proceed with: ${task.title}. Which repo should I use?`;
   }
@@ -293,6 +326,10 @@ const buildConfirmationPrompt = (
 };
 
 const describeRisk = (task: DeveloperTask, repoReason: string): string => {
+  if (task.action === "desktop_control") {
+    return "Visible desktop automation can interact with websites. Jarvis will not enter secrets, solve CAPTCHAs, submit payments, make purchases, or change passwords.";
+  }
+
   if (repoReason === "ambiguous_repo") {
     return "The repo target is ambiguous.";
   }
@@ -325,7 +362,8 @@ const chooseExecutor = (task: DeveloperTask): string => {
     task.action === "inspect_repo" ||
     task.action === "summarize_project" ||
     task.action === "query_logs" ||
-    task.action === "run_tests"
+    task.action === "run_tests" ||
+    task.action === "desktop_control"
   ) {
     return "direct";
   }

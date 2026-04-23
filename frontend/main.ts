@@ -1,4 +1,3 @@
-import VapiModule from "@vapi-ai/web";
 import type VapiClient from "@vapi-ai/web";
 import "./styles.css";
 
@@ -6,12 +5,58 @@ type AppConfig = {
   assistantId: string;
   assistantName: string;
   backendUrl: string;
-  sms: {
-    enabled: boolean;
+  sms: SmsConfigSnapshot;
+  vapiPublicKey: string;
+};
+
+type SmsConfigSnapshot = {
+  enabled: boolean;
+  ownerPhoneTail: string | null;
+  fromNumberTail: string | null;
+};
+
+type SmsOverview = SmsConfigSnapshot & {
+  configured: boolean;
+  webhookAuthMode: "query_secret" | "twilio_signature" | "mixed" | "unknown";
+  verificationState: "approved" | "pending" | "rejected" | "unknown";
+  deliveryState: "healthy" | "degraded" | "blocked" | "unknown";
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  lastOutboundStatus: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  attention: string[];
+};
+
+type SmsHealthMessage = {
+  sid: string | null;
+  direction: "inbound" | "outbound";
+  role: "user" | "assistant" | "system";
+  bodyPreview: string;
+  createdAt: string | null;
+  status: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  source: "conversation" | "twilio_api" | "audit";
+};
+
+type SmsHealthData = {
+  summary: SmsOverview;
+  verification: {
+    state: "approved" | "pending" | "rejected" | "unknown";
+    source: "twilio_api" | "manual_console_required" | "not_configured";
+    detail: string;
+    checkedAt: string;
+  };
+  webhook: {
+    authMode: "query_secret" | "twilio_signature" | "mixed" | "unknown";
+    querySecretConfigured: boolean;
+    twilioSignatureConfigured: boolean;
     ownerPhoneTail: string | null;
     fromNumberTail: string | null;
   };
-  vapiPublicKey: string;
+  recentMessages: SmsHealthMessage[];
+  recentFailures: SmsHealthMessage[];
 };
 
 type Status = "locked" | "ready" | "connecting" | "in-call" | "ended" | "error";
@@ -30,6 +75,11 @@ type DeveloperTask = {
   permissionRequired: string;
   instructions: string;
   acceptanceCriteria: string[];
+  targetApp?: "chrome";
+  url?: string;
+  riskLevel?: "low" | "needs_confirmation" | "blocked";
+  desktopMode?: "normal_chrome";
+  desktopApprovalGranted?: boolean;
   confidence: number;
 };
 
@@ -71,6 +121,18 @@ type ExecutionRun = {
   final_summary: string | null;
 };
 
+type DesktopState = {
+  task_id: string;
+  run_id: string | null;
+  current_url: string | null;
+  page_title: string | null;
+  latest_action: string | null;
+  step: number;
+  screenshot_data_url: string | null;
+  redacted: boolean;
+  updated_at: string | null;
+};
+
 type TaskStatusData = {
   task: TaskRecord;
   latest_events: AuditEvent[];
@@ -84,6 +146,26 @@ type TaskListData = {
   confirmations: Confirmation[];
 };
 
+type OverviewData = TaskListData & {
+  counts: Record<string, number>;
+  runner: {
+    status: string;
+    runner_id: string | null;
+    task_scope: string | null;
+    last_event_type: string | null;
+    last_seen_at: string | null;
+    active_task_id: string | null;
+    active_task_title: string | null;
+  };
+  sms: SmsOverview;
+  database: {
+    configured: boolean;
+    ok: boolean;
+    message: string;
+  };
+  last_activity_at: string | null;
+};
+
 type TaskCreationData = {
   task_id: string;
   status: string;
@@ -92,13 +174,68 @@ type TaskCreationData = {
   confirmation_id?: string;
 };
 
+type OutboundCallData = {
+  call_id?: string;
+  status: string;
+  phone_number: string;
+};
+
+type QuickTask = {
+  label: string;
+  prompt: string;
+  repoHint?: string;
+};
+
+const quickTasks: QuickTask[] = [
+  {
+    label: "Inspect main repo",
+    prompt:
+      "Inspect the main repo and tell me whether it is clean, healthy, and ready for work.",
+    repoHint: "main repo"
+  },
+  {
+    label: "Run checks",
+    prompt:
+      "Run the configured build and checks for the main repo, then summarize any failures clearly.",
+    repoHint: "main repo"
+  },
+  {
+    label: "Update README",
+    prompt:
+      "Update the README in the main repo on a new branch and prepare the change for review.",
+    repoHint: "main repo"
+  },
+  {
+    label: "Open Chrome",
+    prompt: "Open Chrome on my Mac and go to example.com."
+  },
+  {
+    label: "Search GitHub",
+    prompt: "Open Chrome and search GitHub for CallAI."
+  },
+  {
+    label: "Google Vapi",
+    prompt: "Open Chrome, search Google for Vapi phone numbers, and summarize the page."
+  },
+  {
+    label: "Summarize progress",
+    prompt:
+      "Summarize the latest CallAI task activity and tell me what still needs my attention."
+  }
+];
+
 const state: {
   config: AppConfig | null;
   confirmations: Confirmation[];
+  desktopState: DesktopState | null;
   error: string;
   logs: LogEntry[];
   muted: boolean;
+  overview: OverviewData | null;
+  outboundPhone: string;
+  outboundReason: string;
   selectedTaskId: string | null;
+  smsHealth: SmsHealthData | null;
   status: Status;
   statusDetail: string;
   taskDetail: TaskStatusData | null;
@@ -109,16 +246,21 @@ const state: {
 } = {
   config: null,
   confirmations: [],
+  desktopState: null,
   error: "",
   logs: [],
   muted: false,
+  overview: null,
+  outboundPhone: "+19712670353",
+  outboundReason: "CallAI dashboard check-in",
   selectedTaskId: null,
+  smsHealth: null,
   status: "locked",
-  statusDetail: "Log in to load the CallAI operator console.",
+  statusDetail: "Unlock the dashboard to control CallAI.",
   taskDetail: null,
   tasks: [],
   taskDraft: "",
-  repoHint: "",
+  repoHint: "main repo",
   vapi: null
 };
 
@@ -126,6 +268,7 @@ type VapiConstructor = new (apiToken: string) => VapiClient;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 let refreshTimer: number | null = null;
+let vapiConstructorPromise: Promise<VapiConstructor> | null = null;
 
 if (!app) {
   throw new Error("App root was not found.");
@@ -188,9 +331,20 @@ const loadConfig = async (): Promise<void> => {
     const config = await request<AppConfig>("/frontend/config");
     state.config = config;
     state.error = "";
-    createVapiClient(config);
-    setStatus("ready", "Ready for browser voice or typed remote tasks.");
-    addLog("Operator console ready", config.assistantName, "success");
+    try {
+      await createVapiClient(config);
+    } catch (error) {
+      state.vapi = null;
+      state.error = getErrorMessage(error);
+      addLog("Browser voice unavailable", state.error, "warn");
+    }
+    setStatus(
+      "ready",
+      state.vapi
+        ? "Dashboard online. Voice, SMS, and task control are available."
+        : "Dashboard online. SMS and task control are available; browser voice needs attention."
+    );
+    addLog("Dashboard ready", config.assistantName, "success");
     await refreshOperatorData();
     startPolling();
   } catch (error) {
@@ -198,21 +352,21 @@ const loadConfig = async (): Promise<void> => {
     state.config = null;
     state.vapi = null;
     state.status = "locked";
-    state.statusDetail = "Log in to load the CallAI operator console.";
+    state.statusDetail = "Unlock the dashboard to control CallAI.";
     state.error =
       getErrorMessage(error) === "Login required." ? "" : getErrorMessage(error);
     render();
   }
 };
 
-const createVapiClient = (config: AppConfig): void => {
+const createVapiClient = async (config: AppConfig): Promise<void> => {
   state.vapi?.removeAllListeners();
-  const Vapi = resolveVapiConstructor();
+  const Vapi = await loadVapiConstructor();
   const client = new Vapi(config.vapiPublicKey);
 
   client.on("call-start", () => {
-    setStatus("in-call", "Call connected. Give CallAI a developer task.");
-    addLog("Call started", undefined, "success");
+    setStatus("in-call", "Browser voice connected. Jarvis is ready for developer work.");
+    addLog("Browser call started", undefined, "success");
   });
 
   client.on("call-end", () => {
@@ -252,8 +406,13 @@ const createVapiClient = (config: AppConfig): void => {
   state.vapi = client;
 };
 
-const resolveVapiConstructor = (): VapiConstructor => {
-  const candidate = VapiModule as unknown;
+const loadVapiConstructor = async (): Promise<VapiConstructor> => {
+  vapiConstructorPromise ??= import("@vapi-ai/web").then(resolveVapiConstructor);
+  return vapiConstructorPromise;
+};
+
+const resolveVapiConstructor = (module: unknown): VapiConstructor => {
+  const candidate = module as unknown;
 
   if (typeof candidate === "function") {
     return candidate as VapiConstructor;
@@ -265,7 +424,7 @@ const resolveVapiConstructor = (): VapiConstructor => {
     return defaultExport as VapiConstructor;
   }
 
-  throw new Error("Vapi web SDK did not export a constructor.");
+  throw new Error("Vapi web SDK did not export a browser constructor.");
 };
 
 const login = async (event: SubmitEvent): Promise<void> => {
@@ -303,10 +462,13 @@ const logout = async (): Promise<void> => {
   await request<never>("/frontend/logout", { method: "POST" }).catch(() => {});
   state.config = null;
   state.confirmations = [];
+  state.desktopState = null;
   state.error = "";
   state.logs = [];
   state.muted = false;
+  state.overview = null;
   state.selectedTaskId = null;
+  state.smsHealth = null;
   state.taskDetail = null;
   state.tasks = [];
   state.vapi = null;
@@ -314,16 +476,24 @@ const logout = async (): Promise<void> => {
 };
 
 const startCall = async (): Promise<void> => {
-  if (!state.config || !state.vapi) {
+  if (!state.config) {
     state.error = "Login is required before starting a call.";
+    render();
+    return;
+  }
+
+  if (!state.vapi) {
+    state.error =
+      "Browser voice is unavailable because the Vapi web SDK did not initialize. Refresh the page or use outbound calling.";
+    addLog("Browser call unavailable", state.error, "warn");
     render();
     return;
   }
 
   try {
     state.error = "";
-    setStatus("connecting", "Requesting microphone and joining the call...");
-    addLog("Starting call");
+    setStatus("connecting", "Requesting microphone access and joining the browser call...");
+    addLog("Starting browser call");
     const call = await state.vapi.start(state.config.assistantId);
     addLog("Call request created", call, "success");
   } catch (error) {
@@ -362,18 +532,41 @@ const refreshOperatorData = async (): Promise<void> => {
   }
 
   try {
-    const data = await request<TaskListData>("/operator/tasks");
-    state.tasks = data.tasks;
-    state.confirmations = data.confirmations;
+    const [overview, smsHealth, data] = await Promise.all([
+      request<OverviewData>("/operator/overview"),
+      request<SmsHealthData>("/operator/sms/health"),
+      request<TaskListData>("/operator/tasks")
+    ]);
+    state.overview = overview;
+    state.smsHealth = smsHealth;
+    state.tasks = overview.tasks.length ? overview.tasks : data.tasks;
+    state.confirmations = overview.confirmations.length
+      ? overview.confirmations
+      : data.confirmations;
 
     if (!state.selectedTaskId && state.tasks[0]) {
       state.selectedTaskId = state.tasks[0].id;
     }
 
     if (state.selectedTaskId) {
-      state.taskDetail = await request<TaskStatusData>(
-        `/operator/tasks/${encodeURIComponent(state.selectedTaskId)}`
-      );
+      const [detail, desktopState] = await Promise.all([
+        request<TaskStatusData>(
+          `/operator/tasks/${encodeURIComponent(state.selectedTaskId)}`
+        ),
+        request<DesktopState>(
+          `/operator/tasks/${encodeURIComponent(
+            state.selectedTaskId
+          )}/desktop-state`
+        )
+      ]);
+      state.taskDetail = detail;
+      state.desktopState =
+        desktopState.updated_at || desktopState.current_url || desktopState.latest_action
+          ? desktopState
+          : null;
+    } else {
+      state.taskDetail = null;
+      state.desktopState = null;
     }
 
     render();
@@ -395,6 +588,14 @@ const submitTask = async (event: SubmitEvent): Promise<void> => {
     return;
   }
 
+  await createTask(utterance, repoHint, form);
+};
+
+const createTask = async (
+  utterance: string,
+  repoHint?: string,
+  form?: HTMLFormElement
+): Promise<void> => {
   try {
     state.error = "";
     const data = await request<TaskCreationData>("/operator/tasks", {
@@ -406,11 +607,11 @@ const submitTask = async (event: SubmitEvent): Promise<void> => {
     });
 
     state.taskDraft = "";
-    state.repoHint = "";
+    state.repoHint = repoHint || "main repo";
     state.selectedTaskId = data.task_id;
-    form.reset();
+    form?.reset();
     addLog(
-      data.needs_confirmation ? "Task needs confirmation" : "Task queued",
+      data.needs_confirmation ? "Task needs approval" : "Task queued",
       data,
       data.needs_confirmation ? "warn" : "success"
     );
@@ -422,9 +623,53 @@ const submitTask = async (event: SubmitEvent): Promise<void> => {
   }
 };
 
+const submitQuickTask = async (index: number): Promise<void> => {
+  const quickTask = quickTasks[index];
+
+  if (!quickTask) {
+    return;
+  }
+
+  await createTask(quickTask.prompt, quickTask.repoHint);
+};
+
+const startOutboundCall = async (event: SubmitEvent): Promise<void> => {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const phoneNumber = String(new FormData(form).get("phone_number") ?? "").trim();
+  const reason = String(new FormData(form).get("reason") ?? "").trim();
+
+  if (!phoneNumber || !reason) {
+    state.error = "Enter a phone number and reason.";
+    render();
+    return;
+  }
+
+  try {
+    state.error = "";
+    const data = await request<OutboundCallData>("/operator/calls/outbound", {
+      method: "POST",
+      body: JSON.stringify({
+        phone_number: phoneNumber,
+        reason,
+        ...(state.selectedTaskId ? { task_id: state.selectedTaskId } : {})
+      })
+    });
+    state.outboundPhone = phoneNumber;
+    state.outboundReason = reason;
+    addLog("Outbound call started", data, "success");
+    setStatus("ready", `Outbound call ${data.status}.`);
+  } catch (error) {
+    state.error = getErrorMessage(error);
+    addLog("Outbound call failed", state.error, "error");
+    render();
+  }
+};
+
 const selectTask = async (taskId: string): Promise<void> => {
   state.selectedTaskId = taskId;
   state.taskDetail = null;
+  state.desktopState = null;
   await refreshOperatorData();
 };
 
@@ -503,136 +748,268 @@ const stopPolling = (): void => {
 };
 
 const render = (): void => {
-  app.innerHTML = `
-    <main class="shell">
-      <section class="hero" aria-label="CallAI operator console">
-        <div class="hero-copy">
-          <p class="eyebrow">CallAI Remote Developer Operator</p>
-          <h1>Talk to an agent that can work in repos.</h1>
-          <p class="subcopy">Start a voice session, queue coding tasks, approve sensitive actions, and watch Codex-ready execution logs from one deployed control plane.</p>
-        </div>
-        <div class="status-panel">
-          <span class="status-dot ${state.status}"></span>
-          <div>
-            <p class="status-label">${formatStatus(state.status)}</p>
-            <p class="status-detail">${escapeHtml(state.statusDetail)}</p>
-          </div>
-        </div>
-      </section>
-
-      ${state.config ? renderConsole() : renderLogin()}
-    </main>
-  `;
-
+  app.innerHTML = state.config ? renderDashboard() : renderLocked();
   bindEvents();
 };
 
-const renderLogin = (): string => `
-  <section class="login-layout">
-    <form class="login-card" id="login-form">
-      <label for="passcode">Frontend passcode</label>
-      <div class="input-row">
-        <input id="passcode" name="passcode" type="password" autocomplete="current-password" placeholder="Enter passcode" />
-        <button type="submit">Unlock</button>
+const renderLocked = (): string => `
+  <main class="lock-shell">
+    <section class="lock-copy" aria-label="CallAI dashboard login">
+      <p class="eyebrow">CallAI Control</p>
+      <h1>Jarvis Dashboard</h1>
+      <p>Secure operator access for voice, SMS, local bridge execution, approvals, and repo work.</p>
+    </section>
+    <form class="login-panel" id="login-form">
+      <label for="passcode">Passcode</label>
+      <div class="login-row">
+        <input id="passcode" name="passcode" type="password" autocomplete="one-time-code" placeholder="Enter passcode" />
+        <button class="primary" type="submit">Unlock</button>
       </div>
       ${state.error ? `<p class="error-text">${escapeHtml(state.error)}</p>` : ""}
     </form>
-  </section>
+  </main>
 `;
 
-const renderConsole = (): string => `
-  <section class="workspace">
-    <section class="controls panel">
-      <div>
-        <p class="section-label">Voice Session</p>
-        <h2>${escapeHtml(state.config?.assistantName ?? "CallAI")}</h2>
+const renderDashboard = (): string => `
+  <main class="ops-shell">
+    <header class="command-bar">
+      <div class="brand-block">
+        <p class="eyebrow">CallAI Mission Control</p>
+        <h1>Jarvis</h1>
+        <span>${escapeHtml(state.config?.assistantName ?? "Developer operator")}</span>
       </div>
-      <div class="button-row">
-        <button class="primary" id="start-call" ${isBusyOrInCall() ? "disabled" : ""}>Start Call</button>
-        <button id="mute-call" ${state.status !== "in-call" ? "disabled" : ""}>${state.muted ? "Unmute" : "Mute"}</button>
-        <button id="end-call" ${state.status !== "in-call" && state.status !== "connecting" ? "disabled" : ""}>End</button>
-        <button id="refresh">Refresh</button>
-        <button id="logout">Logout</button>
-      </div>
-      ${state.error ? `<p class="error-text">${escapeHtml(state.error)}</p>` : ""}
-      <div class="meter" aria-hidden="true"><span id="volume-meter"></span></div>
-    </section>
 
-    <aside class="metadata panel">
-      <p class="section-label">Assistant</p>
-      <dl>
-        <div><dt>Name</dt><dd>${escapeHtml(state.config?.assistantName ?? "")}</dd></div>
-        <div><dt>ID</dt><dd>${escapeHtml(state.config?.assistantId ?? "")}</dd></div>
-        <div><dt>Backend</dt><dd>${escapeHtml(state.config?.backendUrl ?? "")}</dd></div>
-        <div><dt>Text Control</dt><dd>${renderSmsStatus()}</dd></div>
-      </dl>
-    </aside>
-
-    <section class="task-intake panel">
-      <p class="section-label">New Task</p>
-      <form id="task-form">
-        <textarea name="utterance" rows="4" placeholder="Example: Open the main repo, update the README on a new branch, and run the build."></textarea>
-        <div class="input-row">
-          <input name="repo_hint" placeholder="Repo hint, optional" />
-          <button class="primary" type="submit">Queue Task</button>
+      <form id="task-form" class="command-form">
+        <label for="command-input">Command</label>
+        <textarea id="command-input" name="utterance" rows="2" placeholder="Ask Jarvis to inspect a repo, run checks, control Chrome, check status, or continue work.">${escapeHtml(state.taskDraft)}</textarea>
+        <div class="command-row">
+          <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / current project / Chrome" />
+          <button class="primary" type="submit">Queue</button>
         </div>
       </form>
+
+      <section class="channel-controls" aria-label="Voice and call controls">
+        <div class="control-row">
+          <button class="primary" id="start-call" ${isBusyOrInCall() || !state.vapi ? "disabled" : ""}>Voice</button>
+          <button id="mute-call" ${state.status !== "in-call" ? "disabled" : ""}>${state.muted ? "Unmute" : "Mute"}</button>
+          <button id="end-call" ${state.status !== "in-call" && state.status !== "connecting" ? "disabled" : ""}>End</button>
+        </div>
+        <div class="meter" aria-hidden="true"><span id="volume-meter"></span></div>
+        <form id="outbound-form" class="outbound-form">
+          <input id="phone-number" name="phone_number" value="${escapeHtml(state.outboundPhone)}" placeholder="+19712670353" aria-label="Outbound phone" />
+          <input id="call-reason" name="reason" value="${escapeHtml(state.outboundReason)}" placeholder="Call reason" aria-label="Call reason" />
+          <button type="submit">Call</button>
+        </form>
+      </section>
+
+      <div class="topbar-actions">
+        <button id="refresh" title="Refresh dashboard" aria-label="Refresh dashboard">Refresh</button>
+        <button id="logout" title="Logout" aria-label="Logout">Logout</button>
+      </div>
+    </header>
+
+    ${state.error ? `<div class="notice error-text">${escapeHtml(state.error)}</div>` : ""}
+
+    <section class="quick-strip" aria-label="Quick tasks">
+      ${quickTasks
+        .map(
+          (task, index) =>
+            `<button class="quick-action" data-quick-task="${index}">${escapeHtml(task.label)}</button>`
+        )
+        .join("")}
     </section>
 
-    <section class="queue panel">
-      <div class="panel-heading">
-        <p class="section-label">Task Queue</p>
-        <span>${state.tasks.length} task${state.tasks.length === 1 ? "" : "s"}</span>
-      </div>
-      <div class="task-list">
-        ${
-          state.tasks.length
-            ? state.tasks.map(renderTaskRow).join("")
-            : '<p class="empty">No developer tasks yet.</p>'
-        }
-      </div>
+    <section class="system-strip" aria-label="System strip">
+      ${renderSystemPill("VOICE", formatStatus(state.status), state.statusDetail, statusTone(state.status))}
+      ${renderSystemPill("SMS", smsStatusLabel(), smsStatusDetail(), smsTone())}
+      ${renderSystemPill("VAPI", shortId(state.config?.assistantId ?? ""), state.config?.backendUrl ?? "", state.vapi ? "ok" : "warn")}
+      ${renderSystemPill("LOCAL BRIDGE", runnerStatusLabel(), runnerStatusDetail(), runnerTone())}
+      ${renderSystemPill("RAILWAY DB", databaseStatusLabel(), databaseStatusDetail(), databaseTone())}
+      ${renderSystemPill("APPROVALS", `${state.confirmations.length} pending`, approvalDetail(), state.confirmations.length ? "warn" : "ok")}
     </section>
 
-    <section class="detail panel">
-      ${renderTaskDetail()}
+    ${renderAttentionBanner()}
+
+    <section class="mission-grid">
+      <aside class="panel queue-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">Queue</p>
+            <h2>${openWorkCount()} active / ${state.tasks.length} recent</h2>
+          </div>
+          <span>${escapeHtml(lastActivityLabel())}</span>
+        </div>
+        ${renderTaskGroups()}
+      </aside>
+
+      <section class="panel detail-panel">
+        ${renderTaskDetail()}
+      </section>
+
+      <aside class="right-rail">
+        <section class="panel desktop-panel">
+          ${renderDesktopPreview()}
+        </section>
+
+        <section class="panel approvals-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-label">Human Gate</p>
+              <h2>Approvals</h2>
+            </div>
+            <span>${state.confirmations.length} pending</span>
+          </div>
+          <div class="approval-list">
+            ${
+              state.confirmations.length
+                ? state.confirmations.map(renderConfirmation).join("")
+                : '<p class="empty">No pending approvals.</p>'
+            }
+          </div>
+        </section>
+
+        <section class="panel sms-panel">
+          ${renderSmsPanel()}
+        </section>
+
+        <section class="panel event-panel">
+          <div class="log-heading">
+            <div>
+              <p class="section-label">Event Stream</p>
+              <h2>${state.taskDetail ? "Selected task audit" : "Browser events"}</h2>
+            </div>
+            <button id="clear-log">Clear</button>
+          </div>
+          ${renderEventStream()}
+        </section>
+      </aside>
     </section>
 
-    <section class="confirmations panel">
-      <div class="panel-heading">
-        <p class="section-label">Confirmations</p>
-        <span>${state.confirmations.length} pending</span>
-      </div>
-      ${
-        state.confirmations.length
-          ? state.confirmations.map(renderConfirmation).join("")
-          : '<p class="empty">No pending approvals.</p>'
-      }
-    </section>
-
-    <section class="log-panel panel">
-      <div class="log-heading">
-        <p class="section-label">Live Call Events</p>
-        <button id="clear-log">Clear</button>
-      </div>
-      <div class="logs">
-        ${
-          state.logs.length
-            ? state.logs.map(renderLogEntry).join("")
-            : '<p class="empty">Start a call or queue a task to see events.</p>'
-        }
-      </div>
-    </section>
-  </section>
+    <nav class="mobile-action-bar" aria-label="Task actions">
+      <button data-task-control="continue" ${!state.selectedTaskId || state.taskDetail?.task.status === "running" ? "disabled" : ""}>Continue</button>
+      <button data-task-control="cancel" ${!state.selectedTaskId || state.taskDetail?.task.status === "cancelled" || state.taskDetail?.task.status === "succeeded" ? "disabled" : ""}>Cancel</button>
+      ${renderMobileApprovalButtons()}
+    </nav>
+  </main>
 `;
+
+type UiTone = "ok" | "warn" | "danger" | "idle" | "active";
+
+const renderSystemPill = (
+  label: string,
+  value: string,
+  detail: string,
+  tone: UiTone
+): string => `
+  <article class="system-pill ${tone}">
+    <span></span>
+    <div>
+      <small>${escapeHtml(label)}</small>
+      <strong>${escapeHtml(value || "Unknown")}</strong>
+      <p>${escapeHtml(detail || "No detail reported.")}</p>
+    </div>
+  </article>
+`;
+
+const renderAttentionBanner = (): string => {
+  const items: string[] = [];
+
+  if (state.confirmations.length) {
+    items.push(`${state.confirmations.length} approval${state.confirmations.length === 1 ? "" : "s"} waiting.`);
+  }
+
+  if (state.tasks.some((task) => task.status === "queued") && runnerTone() === "warn") {
+    items.push("Queued work is waiting for the local bridge or runner.");
+  }
+
+  if (!state.smsHealth?.summary.configured) {
+    items.push("SMS control is not fully configured.");
+  }
+
+  state.overview?.sms.attention.forEach((item) => items.push(item));
+
+  if (selectedTask()?.normalized_action === "desktop_control" && !state.desktopState) {
+    items.push("Desktop preview will appear after the Mac bridge observes Chrome.");
+  }
+
+  if (!items.length) {
+    return "";
+  }
+
+  return `<section class="attention-strip">${items
+    .map((item) => `<span>${escapeHtml(item)}</span>`)
+    .join("")}</section>`;
+};
+
+const renderTaskGroups = (): string => {
+  const groups = [
+    {
+      key: "running",
+      title: "Running",
+      tasks: state.tasks.filter((task) => task.status === "running")
+    },
+    {
+      key: "needs-approval",
+      title: "Needs Approval",
+      tasks: state.tasks.filter((task) => task.status === "needs_confirmation")
+    },
+    {
+      key: "queued",
+      title: "Queued",
+      tasks: state.tasks.filter((task) => task.status === "queued")
+    },
+    {
+      key: "blocked",
+      title: "Blocked / Failed",
+      tasks: state.tasks.filter((task) =>
+        ["blocked", "failed"].includes(task.status)
+      )
+    },
+    {
+      key: "done",
+      title: "Done",
+      tasks: state.tasks.filter((task) =>
+        ["succeeded", "cancelled"].includes(task.status)
+      )
+    }
+  ];
+
+  return groups
+    .map(
+      (group) => `
+        <section class="task-group ${group.key}">
+          <header>
+            <span>${escapeHtml(group.title)}</span>
+            <b>${group.tasks.length}</b>
+          </header>
+          <div class="task-list">
+            ${
+              group.tasks.length
+                ? group.tasks.map(renderTaskRow).join("")
+                : '<p class="empty compact">Clear.</p>'
+            }
+          </div>
+        </section>
+      `
+    )
+    .join("");
+};
 
 const renderTaskRow = (task: TaskRecord): string => {
   const active = state.selectedTaskId === task.id ? "active" : "";
+  const runner =
+    active && state.taskDetail ? describeRunner(state.taskDetail) : "Awaiting claim";
+  const latestDesktop =
+    active && task.normalized_action === "desktop_control"
+      ? state.desktopState?.latest_action
+      : null;
 
   return `
     <button class="task-row ${active}" data-task-id="${escapeHtml(task.id)}">
-      <span class="badge ${escapeHtml(task.status)}">${formatLabel(task.status)}</span>
+      <span class="badge ${escapeHtml(task.status)}">${escapeHtml(formatLabel(task.status))}</span>
       <strong>${escapeHtml(task.title)}</strong>
       <small>${escapeHtml(formatLabel(task.normalized_action))} · ${escapeHtml(formatTime(task.updated_at))}</small>
+      <em>${escapeHtml(latestDesktop || runner)}</em>
     </button>
   `;
 };
@@ -641,11 +1018,15 @@ const renderTaskDetail = (): string => {
   const detail = state.taskDetail;
 
   if (!detail) {
-    return '<p class="empty">Select a task to inspect status, runs, and audit logs.</p>';
+    return `
+      <p class="section-label">Task Detail</p>
+      <p class="empty">Select a task to inspect status, runner, latest action, and required next step.</p>
+    `;
   }
 
   const task = detail.task;
   const structured = task.structured_request;
+  const confirmation = selectedConfirmation();
 
   return `
     <div class="panel-heading">
@@ -655,13 +1036,32 @@ const renderTaskDetail = (): string => {
       </div>
       <span class="badge ${escapeHtml(task.status)}">${escapeHtml(formatLabel(task.status))}</span>
     </div>
+    <div class="task-command-line">
+      <span>${escapeHtml(shortId(task.id))}</span>
+      <strong>${escapeHtml(nextActionLabel(detail))}</strong>
+    </div>
     <dl class="detail-grid">
       <div><dt>Action</dt><dd>${escapeHtml(formatLabel(task.normalized_action))}</dd></div>
       <div><dt>Permission</dt><dd>${escapeHtml(formatLabel(task.permission_required))}</dd></div>
       <div><dt>Confidence</dt><dd>${escapeHtml(formatPercent(structured.confidence))}</dd></div>
       <div><dt>Repo Hint</dt><dd>${escapeHtml(structured.repoAlias ?? "No explicit hint")}</dd></div>
+      ${renderDesktopFields(structured)}
       <div><dt>Runner</dt><dd>${escapeHtml(describeRunner(detail))}</dd></div>
+      <div><dt>Updated</dt><dd>${escapeHtml(formatTime(task.updated_at))}</dd></div>
     </dl>
+    ${
+      confirmation
+        ? `<div class="approval-callout">
+            <strong>${escapeHtml(confirmation.prompt)}</strong>
+            <p>${escapeHtml(confirmation.risk)}</p>
+            <div class="button-row compact">
+              <button class="primary" data-confirmation-id="${escapeHtml(confirmation.id)}" data-decision="approved">Approve</button>
+              <button data-confirmation-id="${escapeHtml(confirmation.id)}" data-decision="denied">Deny</button>
+            </div>
+          </div>`
+        : ""
+    }
+    ${detail.final_summary ? `<p class="summary">${escapeHtml(detail.final_summary)}</p>` : ""}
     <p class="instructions">${escapeHtml(structured.instructions)}</p>
     <ul class="criteria">
       ${structured.acceptanceCriteria.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
@@ -678,14 +1078,6 @@ const renderTaskDetail = (): string => {
           : '<p class="empty">Runner has not claimed this task yet.</p>'
       }
     </div>
-    <div class="audit">
-      <p class="section-label">Audit Timeline</p>
-      ${
-        detail.latest_events.length
-          ? detail.latest_events.map(renderAuditEvent).join("")
-          : '<p class="empty">No audit events yet.</p>'
-      }
-    </div>
   `;
 };
 
@@ -698,17 +1090,184 @@ const renderRun = (run: ExecutionRun): string => `
   </article>
 `;
 
-const renderSmsStatus = (): string => {
-  const sms = state.config?.sms;
-
-  if (!sms?.enabled) {
-    return '<span class="status-chip muted">Not configured</span>';
+const renderDesktopFields = (task: DeveloperTask): string => {
+  if (task.action !== "desktop_control") {
+    return "";
   }
 
-  return `<span class="status-chip ok">Enabled</span><small> From ...${escapeHtml(
-    sms.fromNumberTail ?? "----"
-  )} to ...${escapeHtml(sms.ownerPhoneTail ?? "----")}</small>`;
+  return `
+    <div><dt>Desktop App</dt><dd>${escapeHtml(task.targetApp ?? "chrome")}</dd></div>
+    <div><dt>Mode</dt><dd>${escapeHtml(formatLabel(task.desktopMode ?? "normal_chrome"))}</dd></div>
+    <div><dt>Target URL</dt><dd>${escapeHtml(task.url ?? "Open/focus Chrome")}</dd></div>
+    <div><dt>Risk</dt><dd>${escapeHtml(formatLabel(task.riskLevel ?? "low"))}</dd></div>
+    <div><dt>Approved</dt><dd>${task.desktopApprovalGranted ? "Yes" : "No"}</dd></div>
+    <div><dt>Current URL</dt><dd>${escapeHtml(state.desktopState?.current_url ?? "Waiting for browser state")}</dd></div>
+  `;
 };
+
+const renderDesktopPreview = (): string => {
+  const task = selectedTask();
+  const stateLabel = state.desktopState?.updated_at
+    ? `Updated ${formatTime(state.desktopState.updated_at)}`
+    : "Awaiting first snapshot";
+
+  if (!task || task.normalized_action !== "desktop_control") {
+    return `
+      <div class="panel-heading">
+        <div>
+          <p class="section-label">Desktop Preview</p>
+          <h2>No desktop task selected</h2>
+        </div>
+        <span>Chrome</span>
+      </div>
+      <div class="preview-placeholder">Select a Chrome automation task to see the latest page state.</div>
+    `;
+  }
+
+  const desktop = state.desktopState;
+  const image = desktop?.screenshot_data_url
+    ? `<img src="${desktop.screenshot_data_url}" alt="Latest Chrome preview" />`
+    : `<div class="preview-placeholder ${desktop?.redacted ? "redacted" : ""}">${
+        desktop?.redacted
+          ? "Preview withheld for privacy."
+          : "No screenshot captured yet."
+      }</div>`;
+
+  return `
+    <div class="panel-heading">
+      <div>
+        <p class="section-label">Desktop Preview</p>
+        <h2>${escapeHtml(desktop?.page_title ?? "Chrome")}</h2>
+      </div>
+      <span>${escapeHtml(stateLabel)}</span>
+    </div>
+    <div class="preview-frame">${image}</div>
+    <dl class="preview-meta">
+      <div><dt>URL</dt><dd>${escapeHtml(desktop?.current_url ?? "Unknown")}</dd></div>
+      <div><dt>Latest Action</dt><dd>${escapeHtml(desktop?.latest_action ?? "Waiting for action")}</dd></div>
+      <div><dt>Step</dt><dd>${escapeHtml(String(desktop?.step ?? 0))}</dd></div>
+      <div><dt>Privacy</dt><dd>${desktop?.redacted ? "Redacted" : "Visible"}</dd></div>
+    </dl>
+  `;
+};
+
+const renderEventStream = (): string => {
+  if (state.taskDetail) {
+    return `
+      <div class="event-stream">
+        ${
+          state.taskDetail.latest_events.length
+            ? state.taskDetail.latest_events.map(renderAuditEvent).join("")
+            : '<p class="empty">No audit events yet.</p>'
+        }
+      </div>
+    `;
+  }
+
+  return `
+    <div class="logs">
+      ${
+        state.logs.length
+          ? state.logs.map(renderLogEntry).join("")
+          : '<p class="empty">No live events in this browser session.</p>'
+      }
+    </div>
+  `;
+};
+
+const renderMobileApprovalButtons = (): string => {
+  const confirmation = selectedConfirmation();
+
+  if (!confirmation) {
+    return "";
+  }
+
+  return `
+    <button class="primary" data-confirmation-id="${escapeHtml(confirmation.id)}" data-decision="approved">Approve</button>
+    <button data-confirmation-id="${escapeHtml(confirmation.id)}" data-decision="denied">Deny</button>
+  `;
+};
+
+const renderSmsPanel = (): string => {
+  const health = state.smsHealth;
+
+  if (!health) {
+    return `
+      <div class="panel-heading">
+        <div>
+          <p class="section-label">SMS Ops</p>
+          <h2>Loading</h2>
+        </div>
+        <span>Twilio</span>
+      </div>
+      <p class="empty">Waiting for SMS health details.</p>
+    `;
+  }
+
+  const summary = health.summary;
+  const recentMessages = health.recentMessages.length
+    ? health.recentMessages.map(renderSmsMessageRow).join("")
+    : '<p class="empty compact">No recent SMS messages recorded.</p>';
+  const recentFailures = health.recentFailures.length
+    ? health.recentFailures.slice(0, 4).map(renderSmsMessageRow).join("")
+    : '<p class="empty compact">No recent SMS failures.</p>';
+
+  return `
+    <div class="panel-heading">
+      <div>
+        <p class="section-label">SMS Ops</p>
+        <h2>${escapeHtml(smsStatusLabel())}</h2>
+      </div>
+      <span>${escapeHtml(summary.lastOutboundStatus ?? "No recent outbound")}</span>
+    </div>
+    <dl class="sms-summary-grid">
+      <div><dt>Delivery</dt><dd>${renderInlineChip(summary.deliveryState)}</dd></div>
+      <div><dt>Verification</dt><dd>${renderInlineChip(summary.verificationState)}</dd></div>
+      <div><dt>Webhook</dt><dd>${escapeHtml(formatLabel(health.webhook.authMode))}</dd></div>
+      <div><dt>Numbers</dt><dd>...${escapeHtml(summary.fromNumberTail ?? "----")} -> ...${escapeHtml(summary.ownerPhoneTail ?? "----")}</dd></div>
+      <div><dt>Inbound</dt><dd>${escapeHtml(summary.lastInboundAt ? formatTime(summary.lastInboundAt) : "No recent inbound")}</dd></div>
+      <div><dt>Outbound</dt><dd>${escapeHtml(summary.lastOutboundAt ? formatTime(summary.lastOutboundAt) : "No recent outbound")}</dd></div>
+      <div><dt>Error Code</dt><dd>${escapeHtml(summary.lastErrorCode ?? "None")}</dd></div>
+      <div><dt>Checked</dt><dd>${escapeHtml(formatTime(health.verification.checkedAt))}</dd></div>
+    </dl>
+    <p class="sms-detail">${escapeHtml(health.verification.detail)}</p>
+    ${
+      summary.attention.length
+        ? `<ul class="sms-attention-list">${summary.attention
+            .map((item) => `<li>${escapeHtml(item)}</li>`)
+            .join("")}</ul>`
+        : '<p class="empty compact">No SMS follow-up needed right now.</p>'
+    }
+    <div class="sms-section">
+      <p class="section-label">Recent Messages</p>
+      <div class="sms-message-list">${recentMessages}</div>
+    </div>
+    <div class="sms-section">
+      <p class="section-label">Recent Failures</p>
+      <div class="sms-message-list">${recentFailures}</div>
+    </div>
+  `;
+};
+
+const renderSmsMessageRow = (message: SmsHealthMessage): string => `
+  <article class="sms-message-row">
+    <div class="sms-message-meta">
+      <strong>${escapeHtml(formatLabel(message.direction))}</strong>
+      <span>${escapeHtml(formatTime(message.createdAt))}</span>
+    </div>
+    <p>${escapeHtml(message.bodyPreview)}</p>
+    <small>
+      ${escapeHtml(message.status ?? "No status")}
+      ${message.errorCode ? ` · ${escapeHtml(message.errorCode)}` : ""}
+      ${message.sid ? ` · ${escapeHtml(shortId(message.sid))}` : ""}
+    </small>
+  </article>
+`;
+
+const renderInlineChip = (value: string): string =>
+  `<span class="inline-chip ${escapeHtml(inlineChipTone(value))}">${escapeHtml(
+    formatLabel(value)
+  )}</span>`;
 
 const describeRunner = (detail: TaskStatusData): string => {
   const claimed = detail.latest_events.find(
@@ -730,15 +1289,25 @@ const describeRunner = (detail: TaskStatusData): string => {
   return "Not claimed yet";
 };
 
-const renderAuditEvent = (event: AuditEvent): string => `
-  <article class="audit-row ${escapeHtml(event.severity)}">
-    <time>${escapeHtml(formatTime(event.created_at))}</time>
-    <div>
-      <strong>${escapeHtml(event.event_type)}</strong>
-      <pre>${escapeHtml(formatDetail(event.payload) ?? "{}")}</pre>
-    </div>
-  </article>
-`;
+const renderAuditEvent = (event: AuditEvent): string => {
+  const payload = safePayload(event.payload);
+  const title = eventTitle(event);
+  const summary = eventSummary(event, payload);
+
+  return `
+    <article class="audit-row ${escapeHtml(event.severity)}">
+      <time>${escapeHtml(formatTime(event.created_at))}</time>
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(summary)}</p>
+        <details>
+          <summary>raw</summary>
+          <pre>${escapeHtml(formatDetail(payload) ?? "{}")}</pre>
+        </details>
+      </div>
+    </article>
+  `;
+};
 
 const renderConfirmation = (confirmation: Confirmation): string => `
   <article class="confirmation-row">
@@ -765,17 +1334,36 @@ const renderLogEntry = (entry: LogEntry): string => `
 const bindEvents = (): void => {
   document.querySelector<HTMLFormElement>("#login-form")?.addEventListener("submit", login);
   document.querySelector<HTMLFormElement>("#task-form")?.addEventListener("submit", submitTask);
+  document.querySelector<HTMLFormElement>("#outbound-form")?.addEventListener("submit", startOutboundCall);
   document.querySelector<HTMLButtonElement>("#start-call")?.addEventListener("click", startCall);
   document.querySelector<HTMLButtonElement>("#end-call")?.addEventListener("click", endCall);
   document.querySelector<HTMLButtonElement>("#mute-call")?.addEventListener("click", toggleMute);
   document.querySelector<HTMLButtonElement>("#logout")?.addEventListener("click", logout);
   document.querySelector<HTMLButtonElement>("#refresh")?.addEventListener("click", () => void refreshOperatorData());
-  document.querySelector<HTMLButtonElement>("#continue-task")?.addEventListener("click", () => void continueSelectedTask());
-  document.querySelector<HTMLButtonElement>("#cancel-task")?.addEventListener("click", () => void cancelSelectedTask());
+  document
+    .querySelectorAll<HTMLButtonElement>('#continue-task,[data-task-control="continue"]')
+    .forEach((button) =>
+      button.addEventListener("click", () => void continueSelectedTask())
+    );
+  document
+    .querySelectorAll<HTMLButtonElement>('#cancel-task,[data-task-control="cancel"]')
+    .forEach((button) =>
+      button.addEventListener("click", () => void cancelSelectedTask())
+    );
   document.querySelector<HTMLButtonElement>("#clear-log")?.addEventListener("click", () => {
     state.logs = [];
     render();
   });
+  document
+    .querySelector<HTMLTextAreaElement>("#command-input")
+    ?.addEventListener("input", (event) => {
+      state.taskDraft = (event.currentTarget as HTMLTextAreaElement).value;
+    });
+  document
+    .querySelector<HTMLInputElement>('[name="repo_hint"]')
+    ?.addEventListener("input", (event) => {
+      state.repoHint = (event.currentTarget as HTMLInputElement).value;
+    });
 
   document.querySelectorAll<HTMLButtonElement>(".task-row").forEach((button) => {
     button.addEventListener("click", () => {
@@ -783,6 +1371,13 @@ const bindEvents = (): void => {
       if (taskId) {
         void selectTask(taskId);
       }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-quick-task]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.quickTask);
+      void submitQuickTask(index);
     });
   });
 
@@ -817,6 +1412,229 @@ const isBusyOrInCall = (): boolean => {
   return state.status === "connecting" || state.status === "in-call";
 };
 
+const openWorkCount = (): number => {
+  return state.tasks.filter((task) =>
+    ["needs_confirmation", "queued", "running", "blocked"].includes(task.status)
+  ).length;
+};
+
+const selectedTask = (): TaskRecord | null =>
+  state.tasks.find((task) => task.id === state.selectedTaskId) ?? null;
+
+const selectedConfirmation = (): Confirmation | null => {
+  if (!state.selectedTaskId) {
+    return null;
+  }
+
+  return (
+    state.confirmations.find(
+      (confirmation) => confirmation.task_id === state.selectedTaskId
+    ) ?? null
+  );
+};
+
+const nextActionLabel = (detail: TaskStatusData): string => {
+  if (detail.confirmation || selectedConfirmation()) {
+    return "Approval required before the next sensitive action.";
+  }
+
+  if (detail.task.status === "queued") {
+    return "Waiting for a runner to claim the task.";
+  }
+
+  if (detail.task.status === "running") {
+    return state.desktopState?.latest_action || "Runner is working.";
+  }
+
+  if (detail.task.status === "blocked" || detail.task.status === "failed") {
+    return detail.final_summary || "Needs review before continuing.";
+  }
+
+  if (detail.task.status === "succeeded") {
+    return detail.final_summary || "Completed.";
+  }
+
+  return "Standing by.";
+};
+
+const approvalDetail = (): string => {
+  if (!state.confirmations.length) {
+    return "No risky action is waiting on you.";
+  }
+
+  return "Review before commit, push, PR, or higher-risk work proceeds.";
+};
+
+const lastActivityLabel = (): string => {
+  const activity = state.overview?.last_activity_at;
+  return activity ? formatTime(activity) : "No activity";
+};
+
+const smsStatusLabel = (): string => {
+  const summary = state.smsHealth?.summary;
+
+  if (!summary?.configured) {
+    return "Not configured";
+  }
+
+  if (summary.deliveryState === "blocked") {
+    return "Delivery blocked";
+  }
+
+  if (summary.deliveryState === "degraded") {
+    return "Delivery pending";
+  }
+
+  if (summary.verificationState === "unknown") {
+    return "Manual check";
+  }
+
+  return "Healthy";
+};
+
+const smsStatusDetail = (): string => {
+  const summary = state.smsHealth?.summary;
+
+  if (!summary?.configured) {
+    return "Text control needs Twilio env vars.";
+  }
+
+  if (summary.lastErrorCode === "30032") {
+    return "Carrier or toll-free compliance is blocking delivery.";
+  }
+
+  if (summary.lastErrorMessage) {
+    return summary.lastErrorMessage;
+  }
+
+  return `Texts route from ...${summary.fromNumberTail ?? "----"} to ...${summary.ownerPhoneTail ?? "----"}.`;
+};
+
+const smsTone = (): UiTone => {
+  const summary = state.smsHealth?.summary;
+
+  if (!summary?.configured) {
+    return "danger";
+  }
+
+  if (summary.deliveryState === "blocked") {
+    return "danger";
+  }
+
+  if (summary.deliveryState === "degraded") {
+    return "warn";
+  }
+
+  if (summary.deliveryState === "healthy") {
+    return "ok";
+  }
+
+  return "idle";
+};
+
+const runnerStatusLabel = (): string => {
+  const runner = state.overview?.runner;
+  const task = state.tasks.find((item) => item.status === "running");
+
+  if (task) {
+    return runner?.runner_id || "Running";
+  }
+
+  if (runner?.runner_id) {
+    return runner.runner_id;
+  }
+
+  if (state.tasks.some((item) => item.status === "queued")) {
+    return "Waiting";
+  }
+
+  return "Standing by";
+};
+
+const runnerStatusDetail = (): string => {
+  const runner = state.overview?.runner;
+  const running = state.tasks.find((task) => task.status === "running");
+
+  if (running) {
+    return running.title;
+  }
+
+  const queued = state.tasks.filter((task) => task.status === "queued").length;
+
+  if (queued) {
+    return `${queued} queued task${queued === 1 ? "" : "s"} ready for pickup.`;
+  }
+
+  if (state.taskDetail) {
+    return describeRunner(state.taskDetail);
+  }
+
+  if (runner?.last_seen_at) {
+    return `${runner.last_event_type ?? "runner event"} at ${formatTime(runner.last_seen_at)}.`;
+  }
+
+  return "No runner heartbeat seen in recent events.";
+};
+
+const runnerTone = (): UiTone => {
+  if (state.tasks.some((task) => task.status === "running")) {
+    return "active";
+  }
+
+  if (state.tasks.some((task) => task.status === "queued")) {
+    return state.overview?.runner.runner_id ? "warn" : "danger";
+  }
+
+  return state.overview?.runner.runner_id ? "ok" : "idle";
+};
+
+const inlineChipTone = (value: string): "ok" | "warn" | "danger" | "muted" => {
+  const normalized = value.toLowerCase();
+
+  if (["healthy", "approved", "delivered", "sent"].includes(normalized)) {
+    return "ok";
+  }
+
+  if (
+    ["blocked", "rejected", "failed", "undelivered", "canceled"].includes(
+      normalized
+    )
+  ) {
+    return "danger";
+  }
+
+  if (["degraded", "unknown", "pending", "queued", "accepted"].includes(normalized)) {
+    return "warn";
+  }
+
+  return "muted";
+};
+
+const databaseStatusLabel = (): string =>
+  state.overview?.database.ok ? "Connected" : "Needs attention";
+
+const databaseStatusDetail = (): string =>
+  state.overview?.database.message ?? "Database state has not loaded.";
+
+const databaseTone = (): UiTone =>
+  state.overview?.database.ok ? "ok" : "danger";
+
+const statusTone = (status: Status): UiTone => {
+  if (status === "in-call") {
+    return "active";
+  }
+
+  if (status === "ready" || status === "ended") {
+    return "ok";
+  }
+
+  if (status === "connecting") {
+    return "warn";
+  }
+
+  return status === "error" ? "danger" : "idle";
+};
+
 const formatStatus = (status: Status): string => {
   const labels: Record<Status, string> = {
     connecting: "Connecting",
@@ -844,6 +1662,64 @@ const describeMessage = (message: any): string => {
   }
 
   return message?.type ? `Message: ${message.type}` : "Message";
+};
+
+const eventTitle = (event: AuditEvent): string => {
+  const labels: Record<string, string> = {
+    "desktop.observe": "Desktop observed page",
+    "desktop.action_planned": "Desktop planned next step",
+    "desktop.action_completed": "Desktop action completed",
+    "desktop.confirmation_required": "Desktop approval required",
+    "desktop.blocked": "Desktop blocked",
+    "desktop.snapshot_failed": "Desktop snapshot failed",
+    "runner.claimed_task": "Runner claimed task",
+    "run.started": "Run started",
+    "run.succeeded": "Run succeeded",
+    "run.failed": "Run failed",
+    "run.blocked": "Run blocked",
+    "confirmation.requested": "Approval requested",
+    "git.branch_created": "Branch created",
+    "git.diff_summary": "Diff summarized",
+    "tests.completed": "Checks completed",
+    "repo.inspected": "Repo inspected"
+  };
+
+  return labels[event.event_type] ?? formatLabel(event.event_type);
+};
+
+const eventSummary = (
+  event: AuditEvent,
+  payload: Record<string, unknown>
+): string => {
+  const summary =
+    stringField(payload.latest_action_label) ||
+    stringField(payload.summary) ||
+    stringField(payload.reason) ||
+    stringField(payload.error) ||
+    stringField(payload.final_summary);
+
+  if (summary) {
+    return summary;
+  }
+
+  if (event.event_type === "runner.claimed_task") {
+    return `${stringField(payload.runner_id) ?? "Runner"} claimed this task.`;
+  }
+
+  if (event.event_type === "desktop.observe") {
+    return `${stringField(payload.page_title) ?? "Page"} at ${stringField(payload.current_url) ?? "unknown URL"}.`;
+  }
+
+  if (event.event_type === "desktop.action_planned") {
+    const action = payload.action as Record<string, unknown> | undefined;
+    return `Next step: ${formatLabel(String(action?.action ?? "unknown"))}.`;
+  }
+
+  if (event.event_type === "tests.completed") {
+    return `Exit code ${String(payload.code ?? "unknown")}.`;
+  }
+
+  return "Event recorded.";
 };
 
 const getMicAwareError = (error: unknown): string => {
@@ -884,6 +1760,34 @@ const formatDetail = (detail: unknown): string | undefined => {
   }
 };
 
+const safePayload = (payload: Record<string, unknown>): Record<string, unknown> =>
+  redactValue(payload) as Record<string, unknown>;
+
+const redactValue = (value: unknown, key = ""): unknown => {
+  if (/secret|token|api_?key|password|passcode|auth|credential/i.test(key)) {
+    return "[redacted]";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+        childKey,
+        redactValue(childValue, childKey)
+      ])
+    );
+  }
+
+  if (typeof value === "string" && /sk-[A-Za-z0-9_-]{12,}|[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}/.test(value)) {
+    return "[redacted]";
+  }
+
+  return value;
+};
+
 const formatLabel = (value: string): string => {
   return value.replaceAll("_", " ");
 };
@@ -892,13 +1796,21 @@ const formatPercent = (value: number): string => {
   return `${Math.round(value * 100)}%`;
 };
 
-const formatTime = (value: string): string => {
+const formatTime = (value: string | null | undefined): string => {
+  if (!value) {
+    return "Unknown";
+  }
+
   return new Date(value).toLocaleString([], {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
   });
+};
+
+const shortId = (value: string): string => {
+  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
 };
 
 const stringField = (value: unknown): string | undefined => {
@@ -914,4 +1826,5 @@ const escapeHtml = (value: string): string => {
     .replaceAll("'", "&#039;");
 };
 
+render();
 void loadConfig();

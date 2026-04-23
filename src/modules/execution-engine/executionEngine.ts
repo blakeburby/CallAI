@@ -2,6 +2,7 @@ import { auditLog } from "../audit-log/auditLogService.js";
 import { codexBridge } from "../codex-bridge/codexBridge.js";
 import { contextMemory } from "../context-memory/contextMemoryService.js";
 import { chatConnector } from "../chat-connector/chatConnector.js";
+import { desktopController } from "../desktop-controller/desktopController.js";
 import { smsNotifier } from "../sms/smsNotifier.js";
 import { database } from "../../services/dbService.js";
 import type {
@@ -31,7 +32,11 @@ export const executionEngine = {
       : (await contextMemory.resolveRepo(structured)).repo;
     const runnerRepo = repo ? repoForCurrentRunner(repo) : null;
 
-    if (!runnerRepo && structured.action !== "send_chat_message") {
+    if (
+      !runnerRepo &&
+      structured.action !== "send_chat_message" &&
+      structured.action !== "desktop_control"
+    ) {
       await blockTask(task, run, "No repo target was resolved for this task.");
       return;
     }
@@ -121,6 +126,7 @@ export const executionEngine = {
       structured.action === "summarize_project" ||
       structured.action === "query_logs" ||
       structured.action === "run_tests" ||
+      structured.action === "desktop_control" ||
       structured.action === "commit_changes"
     ) {
       return "direct";
@@ -152,6 +158,10 @@ const executeByAction = async (
         ? `Project update sent to ${result.channel}.`
         : `Project update was recorded in the audit log for ${result.channel}.`
     };
+  }
+
+  if (structured.action === "desktop_control") {
+    return executeDesktopControl(task, run, structured);
   }
 
   if (!repo?.local_path) {
@@ -322,6 +332,60 @@ const executeByAction = async (
     summary: `Codex finished work on ${branchName}. Waiting for approval to commit, push, and open a draft pull request. ${diffSummary}`,
     taskStatus: "needs_confirmation",
     notifyCompletion: false
+  };
+};
+
+const executeDesktopControl = async (
+  task: DeveloperTaskRecord,
+  run: ExecutionRunRecord,
+  structured: DeveloperTask
+): Promise<ExecutionResult> => {
+  const riskLevel = structured.riskLevel ?? "low";
+
+  if (riskLevel === "blocked") {
+    await auditLog.log({
+      task_id: task.id,
+      run_id: run.id,
+      event_type: "desktop.task_blocked",
+      severity: "warn",
+      payload: {
+        reason:
+          "The requested website action may involve secrets, credentials, payments, purchases, protected account changes, or CAPTCHA handling.",
+        instructions: structured.instructions
+      }
+    });
+    throw new Error(
+      "Desktop control blocked: this request may involve credentials, secrets, payments, purchases, protected account changes, or CAPTCHA handling."
+    );
+  }
+
+  if (riskLevel === "needs_confirmation") {
+    await requestDesktopControlApproval(task, run, structured);
+    return {
+      summary:
+        "Desktop control is waiting for approval before taking a sensitive website action.",
+      taskStatus: "needs_confirmation",
+      notifyCompletion: false
+    };
+  }
+
+  const result = await desktopController.runChromeTask(task, run, structured);
+
+  if (result.status === "blocked") {
+    throw new Error(result.reason ?? result.summary);
+  }
+
+  if (result.status === "needs_confirmation") {
+    await requestDesktopControlApproval(task, run, structured, result.reason);
+    return {
+      summary: result.summary,
+      taskStatus: "needs_confirmation",
+      notifyCompletion: false
+    };
+  }
+
+  return {
+    summary: result.summary
   };
 };
 
@@ -507,6 +571,40 @@ const requestPublicationApproval = async (
   void smsNotifier.taskNeedsConfirmation(updatedTask, confirmation);
 };
 
+const requestDesktopControlApproval = async (
+  task: DeveloperTaskRecord,
+  run: ExecutionRunRecord,
+  structured: DeveloperTask,
+  reason?: string
+): Promise<void> => {
+  const updatedTask = await database.updateTask(task.id, {
+    status: "needs_confirmation",
+    permission_required: "full_write",
+    structured_request: structured
+  });
+  const confirmation = await database.createConfirmation({
+    task_id: task.id,
+    prompt: `Approve Jarvis taking the next sensitive website step in Chrome for: ${structured.title}?`,
+    risk:
+      reason ??
+      "This may interact with a website in visible Chrome. Jarvis will not enter secrets, solve CAPTCHAs, submit payments, make purchases, or change passwords.",
+    expires_at: new Date(Date.now() + 1000 * 60 * 15).toISOString()
+  });
+
+  await auditLog.log({
+    task_id: task.id,
+    run_id: run.id,
+    event_type: "desktop.confirmation_required",
+    payload: {
+      confirmation_id: confirmation.id,
+      target_app: structured.targetApp ?? "chrome",
+      requested_url: structured.url ?? null
+    }
+  });
+
+  void smsNotifier.taskNeedsConfirmation(updatedTask, confirmation);
+};
+
 const blockTask = async (
   task: DeveloperTaskRecord,
   run: ExecutionRunRecord,
@@ -639,7 +737,7 @@ const repoForCurrentRunner = (repo: RepoRecord): RepoRecord => {
 };
 
 const isRunnerConfigurationIssue = (message: string): boolean => {
-  return /failed to start|enoent|no such file|command not found|not authenticated|authentication|log in|login|api key|openai_api_key|codex_home/i.test(
+  return /failed to start|enoent|no such file|command not found|not authenticated|authentication|log in|login|api key|openai_api_key|codex_home|desktop control requires|desktop control blocked/i.test(
     message
   );
 };
