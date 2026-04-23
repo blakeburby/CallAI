@@ -150,6 +150,37 @@ It claims queued tasks, logs runner metadata to the audit timeline, creates `cal
 codex exec --json --sandbox workspace-write --cd <repo> <prompt>
 ```
 
+Visible Chrome control also runs through the Mac local bridge. Requests such as
+“open Chrome and go to example.com” are parsed as `desktop_control` tasks. The
+bridge uses Blake's normal Chrome session, opens/focuses the front window,
+requires Chrome's `View > Developer > Allow JavaScript from Apple Events`
+setting, observes page text and controls, and runs a bounded observe-plan-act
+loop for navigation, searching, clicking, typing, selecting, and routine
+non-sensitive form filling. It records `desktop.observe`,
+`desktop.action_planned`, `desktop.action_completed`,
+`desktop.confirmation_required`, and `desktop.blocked` audit events.
+For desktop tasks, the bridge also writes one latest-only `desktop_snapshots`
+record with current URL, page title, latest action, step count, and a compressed
+Chrome preview when the page is not sensitive. Sensitive pages are marked
+redacted and do not store screenshots.
+
+Desktop autonomy defaults:
+
+```bash
+DESKTOP_MAX_STEPS=8
+DESKTOP_STEP_TIMEOUT_MS=15000
+DESKTOP_REQUIRE_CHROME_JS_EVENTS=true
+DESKTOP_FAST_AUTONOMY=true
+DESKTOP_CAPTURE_SCREENSHOTS=true
+```
+
+Fast autonomy applies only to low-risk browser work. The bridge blocks or pauses
+before credentials, secrets, payment or banking flows, purchases, CAPTCHA
+handling, account/security changes, uploads, deletes, or externally visible
+submits unless a confirmation flow explicitly approves the next step. Railway
+workers do not claim desktop tasks unless `RUNNER_ENABLE_DESKTOP_CONTROL=true`
+is set; by default those tasks wait for `macbook-local-bridge`.
+
 Manual preflight:
 
 ```bash
@@ -196,9 +227,20 @@ Set the Twilio Messaging webhook for the SMS-capable Twilio number to:
 https://callai-iota.vercel.app/sms/inbound?secret=<SMS_WEBHOOK_SECRET>
 ```
 
-Inbound SMS is accepted only from `OWNER_PHONE_NUMBER`. Texts are parsed into CallAI tasks, then Vercel replies with a concise queued or confirmation-needed message. Completion, failure, blocked, and confirmation-needed notifications are sent back by SMS when Twilio env is configured.
+The SMS endpoint also accepts valid Twilio request signatures using `TWILIO_AUTH_TOKEN`; the query secret is kept as an explicit webhook guard and local smoke-test path.
 
-The browser console exposes only whether text control is configured and the last four digits of the owner/from numbers. It never exposes Twilio tokens, OpenAI keys, Vapi private keys, or `DATABASE_URL`.
+Inbound SMS is accepted only from `OWNER_PHONE_NUMBER`. Texts are handled as a Jarvis chat first: casual messages get concise replies, work requests create CallAI tasks, status questions inspect the queue, and approval replies such as `approve 123456` or `deny 123456` decide pending confirmations. Completion, failure, blocked, and confirmation-needed notifications are sent back by SMS when Twilio env is configured.
+
+The protected operator console now exposes exact SMS health without exposing secrets:
+
+- webhook auth mode (`query_secret`, `twilio_signature`, or `mixed`)
+- verification state (`approved`, `pending`, `rejected`, or `unknown`)
+- delivery state (`healthy`, `degraded`, `blocked`, or `unknown`)
+- last inbound/outbound timestamps and outbound status
+- recent Twilio error code and message
+- recent message/failure rows and next-step attention items
+
+Twilio auth tokens, OpenAI keys, Vapi private keys, full phone numbers, and `DATABASE_URL` are never exposed in the browser UI.
 
 ## Runner
 

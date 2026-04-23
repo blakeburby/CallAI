@@ -4,6 +4,7 @@ import type {
   AuditEventRecord,
   ChatChannelRecord,
   ConfirmationRequestRecord,
+  DesktopSnapshotRecord,
   DeveloperTaskRecord,
   ExecutionRunRecord,
   ExecutorKind,
@@ -11,6 +12,8 @@ import type {
   PermissionLevel,
   RepoRecord,
   RunnerTaskScope,
+  SmsConversationRecord,
+  SmsMessageRecord,
   TaskStatus,
   VoiceSessionRecord
 } from "../types/operator.js";
@@ -58,14 +61,45 @@ type ExecutionRunInput = {
   final_summary?: string | null;
 };
 
+type DesktopSnapshotInput = {
+  task_id: string;
+  run_id?: string | null;
+  current_url?: string | null;
+  page_title?: string | null;
+  latest_action?: string | null;
+  step?: number;
+  screenshot_data_url?: string | null;
+  redacted?: boolean;
+};
+
+type ClaimTaskOptions = {
+  allowDesktopControl?: boolean;
+};
+
+type SmsConversationInput = {
+  phone_e164: string;
+  status?: string;
+};
+
+type SmsMessageInput = {
+  conversation_id: string;
+  role: SmsMessageRecord["role"];
+  body: string;
+  provider_message_sid?: string | null;
+  payload?: JsonRecord;
+};
+
 type InMemoryStore = {
   auditEvents: AuditEventRecord[];
   chatChannels: ChatChannelRecord[];
   confirmations: ConfirmationRequestRecord[];
+  desktopSnapshots: DesktopSnapshotRecord[];
   executionRuns: ExecutionRunRecord[];
   memories: MemoryRecord[];
   repos: RepoRecord[];
   repoAliases: Array<{ id: string; repo_id: string; alias: string }>;
+  smsConversations: SmsConversationRecord[];
+  smsMessages: SmsMessageRecord[];
   tasks: DeveloperTaskRecord[];
   voiceSessions: VoiceSessionRecord[];
   transcripts: Array<{
@@ -91,10 +125,13 @@ const memoryStore: InMemoryStore = {
   auditEvents: [],
   chatChannels: [],
   confirmations: [],
+  desktopSnapshots: [],
   executionRuns: [],
   memories: [],
   repos: [],
   repoAliases: [],
+  smsConversations: [],
+  smsMessages: [],
   tasks: [],
   transcripts: [],
   voiceSessions: []
@@ -229,6 +266,122 @@ export const database = {
       occurred_at: now(),
       ...input
     });
+  },
+
+  async upsertSmsConversation(
+    input: SmsConversationInput
+  ): Promise<SmsConversationRecord> {
+    if (db) {
+      return queryRequired<SmsConversationRecord>(
+        `insert into sms_conversations (phone_e164, status, last_message_at)
+         values ($1, $2, now())
+         on conflict (phone_e164) do update
+           set status = excluded.status,
+               last_message_at = now(),
+               updated_at = now()
+         returning *`,
+        [input.phone_e164, input.status ?? "active"],
+        "upsert sms conversation"
+      );
+    }
+
+    const existing = memoryStore.smsConversations.find(
+      (conversation) => conversation.phone_e164 === input.phone_e164
+    );
+
+    if (existing) {
+      existing.status = input.status ?? existing.status;
+      existing.last_message_at = now();
+      existing.updated_at = now();
+      return existing;
+    }
+
+    const timestamp = now();
+    const conversation: SmsConversationRecord = {
+      id: randomUUID(),
+      phone_e164: input.phone_e164,
+      status: input.status ?? "active",
+      last_message_at: timestamp,
+      created_at: timestamp,
+      updated_at: timestamp
+    };
+    memoryStore.smsConversations.unshift(conversation);
+    return conversation;
+  },
+
+  async findSmsConversationByPhone(
+    phoneE164: string
+  ): Promise<SmsConversationRecord | null> {
+    if (db) {
+      return queryOne<SmsConversationRecord>(
+        `select * from sms_conversations
+         where phone_e164 = $1
+         limit 1`,
+        [phoneE164],
+        "find sms conversation by phone"
+      );
+    }
+
+    return (
+      memoryStore.smsConversations.find(
+        (conversation) => conversation.phone_e164 === phoneE164
+      ) ?? null
+    );
+  },
+
+  async appendSmsMessage(input: SmsMessageInput): Promise<SmsMessageRecord> {
+    if (db) {
+      return queryRequired<SmsMessageRecord>(
+        `insert into sms_messages (
+           conversation_id, role, body, provider_message_sid, payload
+         )
+         values ($1, $2, $3, $4, $5::jsonb)
+         returning *`,
+        [
+          input.conversation_id,
+          input.role,
+          input.body,
+          input.provider_message_sid ?? null,
+          JSON.stringify(input.payload ?? {})
+        ],
+        "append sms message"
+      );
+    }
+
+    const message: SmsMessageRecord = {
+      id: randomUUID(),
+      conversation_id: input.conversation_id,
+      role: input.role,
+      body: input.body,
+      provider_message_sid: input.provider_message_sid ?? null,
+      payload: input.payload ?? {},
+      created_at: now()
+    };
+    memoryStore.smsMessages.unshift(message);
+    return message;
+  },
+
+  async listSmsMessages(
+    conversationId: string,
+    limit = 12
+  ): Promise<SmsMessageRecord[]> {
+    if (db) {
+      const rows = await queryMany<SmsMessageRecord>(
+        `select * from sms_messages
+         where conversation_id = $1
+         order by created_at desc
+         limit $2`,
+        [conversationId, limit],
+        "list sms messages"
+      );
+
+      return rows.reverse();
+    }
+
+    return memoryStore.smsMessages
+      .filter((message) => message.conversation_id === conversationId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(-limit);
   },
 
   async createTask(input: CreateTaskRow): Promise<DeveloperTaskRecord> {
@@ -433,13 +586,95 @@ export const database = {
     return memoryStore.executionRuns.filter((run) => run.task_id === taskId);
   },
 
+  async upsertDesktopSnapshot(
+    input: DesktopSnapshotInput
+  ): Promise<DesktopSnapshotRecord> {
+    const snapshot = {
+      task_id: input.task_id,
+      run_id: input.run_id ?? null,
+      current_url: input.current_url ?? null,
+      page_title: input.page_title ?? null,
+      latest_action: input.latest_action ?? null,
+      step: input.step ?? 0,
+      screenshot_data_url: input.screenshot_data_url ?? null,
+      redacted: input.redacted ?? false
+    };
+
+    if (db) {
+      return queryRequired<DesktopSnapshotRecord>(
+        `insert into desktop_snapshots (
+           task_id, run_id, current_url, page_title, latest_action,
+           step, screenshot_data_url, redacted
+         )
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
+         on conflict (task_id) do update
+           set run_id = excluded.run_id,
+               current_url = excluded.current_url,
+               page_title = excluded.page_title,
+               latest_action = excluded.latest_action,
+               step = excluded.step,
+               screenshot_data_url = excluded.screenshot_data_url,
+               redacted = excluded.redacted,
+               updated_at = now()
+         returning *`,
+        [
+          snapshot.task_id,
+          snapshot.run_id,
+          snapshot.current_url,
+          snapshot.page_title,
+          snapshot.latest_action,
+          snapshot.step,
+          snapshot.screenshot_data_url,
+          snapshot.redacted
+        ],
+        "upsert desktop snapshot"
+      );
+    }
+
+    const existing = memoryStore.desktopSnapshots.find(
+      (item) => item.task_id === input.task_id
+    );
+    const row: DesktopSnapshotRecord = {
+      ...snapshot,
+      updated_at: now()
+    };
+
+    if (existing) {
+      Object.assign(existing, row);
+      return existing;
+    }
+
+    memoryStore.desktopSnapshots.unshift(row);
+    return row;
+  },
+
+  async getDesktopSnapshot(taskId: string): Promise<DesktopSnapshotRecord | null> {
+    if (db) {
+      return queryOne<DesktopSnapshotRecord>(
+        `select * from desktop_snapshots
+         where task_id = $1
+         limit 1`,
+        [taskId],
+        "get desktop snapshot"
+      );
+    }
+
+    return (
+      memoryStore.desktopSnapshots.find((item) => item.task_id === taskId) ?? null
+    );
+  },
+
   async claimNextQueuedTask(
     executor: ExecutorKind,
-    scope: RunnerTaskScope = "all"
+    scope: RunnerTaskScope = "all",
+    options: ClaimTaskOptions = {}
   ): Promise<{ task: DeveloperTaskRecord; run: ExecutionRunRecord } | null> {
     if (db) {
       const client = await db.connect();
       const scopeFilter = taskScopeFilter(scope);
+      const desktopFilter = options.allowDesktopControl
+        ? ""
+        : "and (structured_request->>'action') is distinct from 'desktop_control'";
 
       try {
         await client.query("begin");
@@ -447,6 +682,7 @@ export const database = {
           `select * from tasks
            where status = 'queued'
              ${scopeFilter.sql}
+             ${desktopFilter}
            order by created_at asc
            for update skip locked
            limit 1`,
@@ -492,7 +728,13 @@ export const database = {
     const task = memoryStore.tasks
       .slice()
       .reverse()
-      .find((item) => item.status === "queued" && taskMatchesScope(item, scope));
+      .find(
+        (item) =>
+          item.status === "queued" &&
+          taskMatchesScope(item, scope) &&
+          (options.allowDesktopControl ||
+            item.structured_request.action !== "desktop_control")
+      );
 
     if (!task) {
       return null;
