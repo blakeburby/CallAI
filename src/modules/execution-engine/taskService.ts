@@ -3,6 +3,7 @@ import { contextMemory } from "../context-memory/contextMemoryService.js";
 import { parseDeveloperTask } from "../task-parser/taskParser.js";
 import { smsNotifier } from "../sms/smsNotifier.js";
 import { database } from "../../services/dbService.js";
+import { logger } from "../../utils/logger.js";
 import type {
   ConfirmationRequestRecord,
   CreateTaskInput,
@@ -93,7 +94,7 @@ export const taskService = {
       });
 
       if (input.source !== "sms") {
-        void smsNotifier.taskNeedsConfirmation(task, confirmation);
+        smsNotifier.taskNeedsConfirmation(task, confirmation).catch((err) => logger.error("SMS notification failed", { error: String(err) }));
       }
     } else {
       await auditLog.log({
@@ -149,7 +150,7 @@ export const taskService = {
   ): Promise<TaskStatusResult> {
     const task = await requireTask(taskId);
 
-    if (["cancelled", "running"].includes(task.status)) {
+    if (!["failed", "blocked"].includes(task.status)) {
       throw new Error(`Task cannot be continued from ${task.status}.`);
     }
 
@@ -179,6 +180,11 @@ export const taskService = {
 
     if (confirmation.status !== "pending") {
       throw new Error(`Confirmation is already ${confirmation.status}.`);
+    }
+
+    if (new Date(confirmation.expires_at) <= new Date()) {
+      await database.updateConfirmation(confirmation.id, "denied");
+      throw new Error("Confirmation has expired.");
     }
 
     const task = await requireTask(confirmation.task_id);

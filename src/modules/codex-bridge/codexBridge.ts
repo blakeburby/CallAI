@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { auditLog } from "../audit-log/auditLogService.js";
+import { logger } from "../../utils/logger.js";
 
 type CodexDelegationInput = {
   runId: string;
@@ -99,19 +100,19 @@ const runProcess = async (input: {
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
-      void auditLog.log({
+      auditLog.log({
         task_id: input.taskId,
         run_id: input.runId,
         event_type: `${input.eventPrefix}.stdout`,
         payload: {
           text: chunk.toString("utf8").slice(0, 8000)
         }
-      });
+      }).catch((err) => logger.error("Audit log failed", { error: String(err) }));
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
       stderrTail = `${stderrTail}${chunk.toString("utf8")}`.slice(-4000);
-      void auditLog.log({
+      auditLog.log({
         task_id: input.taskId,
         run_id: input.runId,
         event_type: `${input.eventPrefix}.stderr`,
@@ -119,7 +120,7 @@ const runProcess = async (input: {
         payload: {
           text: chunk.toString("utf8").slice(0, 8000)
         }
-      });
+      }).catch((err) => logger.error("Audit log failed", { error: String(err) }));
     });
 
     child.on("error", (error) => {

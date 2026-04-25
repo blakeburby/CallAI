@@ -46,13 +46,20 @@ export const createPostgresPool = (): PgPool | null => {
 
 export function resolveDatabaseSsl(databaseUrl: string): PoolConfig["ssl"] {
   const setting = (process.env.DATABASE_SSL || "auto").toLowerCase();
+  const isProduction = process.env.NODE_ENV === "production";
 
   if (["false", "disable", "disabled", "off", "0"].includes(setting)) {
     return false;
   }
 
-  if (["true", "require", "required", "on", "1"].includes(setting)) {
+  // When explicitly set to "require", allow rejectUnauthorized: false
+  // (Railway/Render convention where the platform guarantees the connection).
+  if (["require", "required"].includes(setting)) {
     return { rejectUnauthorized: false };
+  }
+
+  if (["true", "on", "1"].includes(setting)) {
+    return { rejectUnauthorized: isProduction };
   }
 
   try {
@@ -77,10 +84,10 @@ export function resolveDatabaseSsl(databaseUrl: string): PoolConfig["ssl"] {
       return false;
     }
   } catch {
-    return { rejectUnauthorized: false };
+    return { rejectUnauthorized: isProduction };
   }
 
-  return { rejectUnauthorized: false };
+  return { rejectUnauthorized: isProduction };
 }
 
 function configurePostgresTypeParsers(): void {

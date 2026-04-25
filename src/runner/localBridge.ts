@@ -3,8 +3,13 @@ import path from "node:path";
 
 const workspaceRoot =
   process.env.LOCAL_BRIDGE_REPO_PATH ||
-  process.env.DEFAULT_REPO_PATH ||
-  "/Users/blakeburby/Desktop/CallAI-main";
+  process.env.DEFAULT_REPO_PATH;
+
+if (!workspaceRoot) {
+  throw new Error(
+    "LOCAL_BRIDGE_REPO_PATH or DEFAULT_REPO_PATH must be set."
+  );
+}
 
 process.env.RUNNER_ID =
   process.env.LOCAL_BRIDGE_RUNNER_ID || "macbook-local-bridge";

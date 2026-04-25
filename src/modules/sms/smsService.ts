@@ -1,3 +1,5 @@
+import { logger } from "../../utils/logger.js";
+
 type SendSmsInput = {
   to: string;
   body: string;
@@ -85,6 +87,12 @@ export const smsService = {
     const to = smsService.normalizePhone(input.to);
 
     if (!accountSid || !authToken || !from || !to) {
+      logger.warn("SMS not sent: missing Twilio configuration or invalid phone number", {
+        hasAccountSid: Boolean(accountSid),
+        hasAuthToken: Boolean(authToken),
+        hasFrom: Boolean(from),
+        hasTo: Boolean(to)
+      });
       return;
     }
 

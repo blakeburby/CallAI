@@ -134,17 +134,20 @@ const sendToolResult = async (
       message
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    logger.error(`Tool execution failed: ${toolName}`, { error: message });
+    const detail = error instanceof Error ? error.message : "Unknown error";
+    logger.error(`Tool execution failed: ${toolName}`, { error: detail });
+
+    const isUserError =
+      /not found|cannot be continued|already|expired|confirmation/i.test(detail);
 
     sendToolPayload(
       response,
       {
         success: false,
-        error: message,
+        error: isUserError ? detail : "An internal error occurred.",
         message: ERROR_MESSAGE
       },
-      500
+      isUserError ? 400 : 500
     );
   }
 };

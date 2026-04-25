@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import {
   createFrontendSessionCookie,
   frontendCookieOptions,
@@ -8,12 +9,19 @@ import {
 } from "../middleware/frontendSession.js";
 import { smsService } from "../modules/sms/smsService.js";
 
-const ASSISTANT_ID = "fa6b7d3e-5fed-4137-acd9-87cef47e548a";
-const ASSISTANT_NAME = "CallAI Developer Operator";
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { success: false, error: "Too many login attempts. Try again later." }
+});
+
+const DEFAULT_ASSISTANT_NAME = "CallAI Developer Operator";
 
 export const frontendRouter = Router();
 
-frontendRouter.post("/frontend/login", (request, response) => {
+frontendRouter.post("/frontend/login", loginLimiter, (request, response) => {
   const passcode = process.env.FRONTEND_PASSCODE;
   const submitted = request.body?.passcode;
 
@@ -65,8 +73,8 @@ frontendRouter.get("/frontend/config", (request, response) => {
   response.json({
     success: true,
     data: {
-      assistantId: process.env.VAPI_ASSISTANT_ID || ASSISTANT_ID,
-      assistantName: process.env.VAPI_ASSISTANT_NAME || ASSISTANT_NAME,
+      assistantId: process.env.VAPI_ASSISTANT_ID,
+      assistantName: process.env.VAPI_ASSISTANT_NAME || DEFAULT_ASSISTANT_NAME,
       backendUrl: getPublicOrigin(request),
       sms: smsService.configSummary(),
       vapiPublicKey: publicKey

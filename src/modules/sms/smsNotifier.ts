@@ -71,9 +71,10 @@ const redactSensitiveText = (value: string): string => {
   const redacted = value
     .replace(/sk-[a-zA-Z0-9_-]{16,}/g, "[redacted OpenAI key]")
     .replace(/AC[a-fA-F0-9]{32}/g, "[redacted Twilio SID]")
-    .replace(/[a-fA-F0-9]{32,}/g, "[redacted token]")
+    .replace(/ghp_[a-zA-Z0-9]{36,}/g, "[redacted GitHub token]")
+    .replace(/AKIA[A-Z0-9]{16}/g, "[redacted AWS key]")
     .replace(
-      /\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)\s*=\s*([^\s]+)/gi,
+      /\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*)\s*=\s*([^\s]+)/gi,
       "$1=[redacted]"
     );
 

@@ -1,5 +1,6 @@
 import { auditLog } from "../audit-log/auditLogService.js";
 import { codexBridge } from "../codex-bridge/codexBridge.js";
+import { logger } from "../../utils/logger.js";
 import { contextMemory } from "../context-memory/contextMemoryService.js";
 import { chatConnector } from "../chat-connector/chatConnector.js";
 import { smsNotifier } from "../sms/smsNotifier.js";
@@ -70,7 +71,7 @@ export const executionEngine = {
       });
 
       if (result.notifyCompletion !== false) {
-        void smsNotifier.taskFinished(task, "succeeded", result.summary);
+        smsNotifier.taskFinished(task, "succeeded", result.summary).catch((err) => logger.error("SMS notification failed", { error: String(err) }));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -93,7 +94,7 @@ export const executionEngine = {
         severity: "error",
         payload: { error: message }
       });
-      void smsNotifier.taskFinished(task, "failed", message);
+      smsNotifier.taskFinished(task, "failed", message).catch((err) => logger.error("SMS notification failed", { error: String(err) }));
     }
   },
 
@@ -504,7 +505,7 @@ const requestPublicationApproval = async (
     }
   });
 
-  void smsNotifier.taskNeedsConfirmation(updatedTask, confirmation);
+  smsNotifier.taskNeedsConfirmation(updatedTask, confirmation).catch((err) => logger.error("SMS notification failed", { error: String(err) }));
 };
 
 const blockTask = async (
@@ -525,7 +526,7 @@ const blockTask = async (
     severity: "warn",
     payload: { reason }
   });
-  void smsNotifier.taskFinished(task, "blocked", reason);
+  smsNotifier.taskFinished(task, "blocked", reason).catch((err) => logger.error("SMS notification failed", { error: String(err) }));
 };
 
 const buildCodexPrompt = (task: DeveloperTask, branchName: string): string => {

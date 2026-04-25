@@ -1,16 +1,25 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { auditLog } from "../modules/audit-log/auditLogService.js";
 import { taskService } from "../modules/execution-engine/taskService.js";
 import { smsService } from "../modules/sms/smsService.js";
 
+const smsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { success: false, error: "Too many requests." }
+});
+
 export const smsRouter = Router();
 
-smsRouter.post("/sms/inbound", async (request, response, next) => {
+smsRouter.post("/sms/inbound", smsLimiter, async (request, response, next) => {
   try {
     const configuredSecret = process.env.SMS_WEBHOOK_SECRET;
     const suppliedSecret = String(request.query.secret ?? "");
 
-    if (configuredSecret && suppliedSecret !== configuredSecret) {
+    if (!configuredSecret || suppliedSecret !== configuredSecret) {
       response.type("text/xml").status(403).send(smsService.twiml(""));
       return;
     }
