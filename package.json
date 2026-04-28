@@ -19,7 +19,10 @@
     "runner": "node dist/runner/agentRunner.js",
     "runner:dev": "tsx src/runner/agentRunner.ts",
     "local-bridge": "node dist/runner/localBridge.js",
-    "local-bridge:dev": "tsx src/runner/localBridge.ts"
+    "local-bridge:dev": "tsx src/runner/localBridge.ts",
+    "codex-thread:claim": "tsx src/scripts/codexThreadBridge.ts claim",
+    "codex-thread:complete": "tsx src/scripts/codexThreadBridge.ts complete",
+    "codex-thread:fail": "tsx src/scripts/codexThreadBridge.ts fail"
   },
   "dependencies": {
     "@openai/codex": "^0.122.0",

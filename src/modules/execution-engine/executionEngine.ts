@@ -105,6 +105,10 @@ export const executionEngine = {
   chooseExecutor(task: DeveloperTaskRecord): ExecutorKind {
     const structured = task.structured_request as DeveloperTask;
 
+    if (task.execution_target === "codex_thread") {
+      return "codex_thread";
+    }
+
     if (structured.postApprovalAction?.action === "open_pull_request") {
       return "github";
     }

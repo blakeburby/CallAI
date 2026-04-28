@@ -36,16 +36,19 @@ export const executorKinds = [
   "codex_local",
   "codex_cloud",
   "github",
-  "chat"
+  "chat",
+  "codex_thread"
 ] as const;
 
 export const runnerTaskScopes = ["all", "read_only", "write"] as const;
+export const taskExecutionTargets = ["runner", "codex_thread"] as const;
 
 export type NormalizedAction = (typeof normalizedActions)[number];
 export type PermissionLevel = (typeof permissionLevels)[number];
 export type TaskStatus = (typeof taskStatuses)[number];
 export type ExecutorKind = (typeof executorKinds)[number];
 export type RunnerTaskScope = (typeof runnerTaskScopes)[number];
+export type TaskExecutionTarget = (typeof taskExecutionTargets)[number];
 
 export type DeveloperTask = {
   action: NormalizedAction;
@@ -184,6 +187,7 @@ export type DeveloperTaskRecord = {
   structured_request: DeveloperTask;
   status: TaskStatus;
   permission_required: PermissionLevel;
+  execution_target: TaskExecutionTarget;
   created_at: string;
   updated_at: string;
 };
@@ -197,6 +201,19 @@ export type ExecutionRunRecord = {
   started_at: string | null;
   finished_at: string | null;
   final_summary: string | null;
+};
+
+export type CodexThreadJobRecord = {
+  id: string;
+  task_id: string;
+  status: TaskStatus;
+  thread_label: string;
+  claimed_at: string | null;
+  completed_at: string | null;
+  heartbeat_at: string | null;
+  final_summary: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type DesktopSnapshotRecord = {
@@ -261,6 +278,7 @@ export type CreateTaskInput = {
 export type TaskCreationResult = {
   task_id: string;
   status: TaskStatus;
+  execution_target: TaskExecutionTarget;
   interpreted_task: DeveloperTask;
   needs_confirmation: boolean;
   confirmation_id?: string;
@@ -271,6 +289,7 @@ export type TaskStatusResult = {
   task: DeveloperTaskRecord;
   latest_events: AuditEventRecord[];
   runs: ExecutionRunRecord[];
+  codex_thread_job?: CodexThreadJobRecord;
   confirmation?: ConfirmationRequestRecord;
   final_summary?: string;
 };

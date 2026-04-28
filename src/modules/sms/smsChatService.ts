@@ -268,6 +268,10 @@ const createTaskReply = async (
     return `Approval needed: ${task.interpreted_task.title}. Reply approve ${confirmationTail} or deny ${confirmationTail}.`;
   }
 
+  if (task.execution_target === "codex_thread") {
+    return `Sent to Codex chat: ${task.interpreted_task.title}. Task ${tail}. I'll text you when it finishes.`;
+  }
+
   return `Queued: ${task.interpreted_task.title}. Task ${tail}. I'll text you when it finishes.`;
 };
 

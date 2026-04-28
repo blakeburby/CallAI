@@ -138,6 +138,12 @@ const fallbackSummary = (toolName: string, data: unknown): string => {
   if (toolName === "create_task") {
     const record = asRecord(data);
     const status = stringValue(record?.status) ?? "queued";
+    const target = stringValue(record?.execution_target);
+
+    if (target === "codex_thread" && status === "queued") {
+      return "I understood the task and sent it to the Codex project thread.";
+    }
+
     return `I understood the task and it is now ${status.replaceAll("_", " ")}.`;
   }
 

@@ -60,6 +60,7 @@ operatorRouter.get("/operator/overview", async (_request, response, next) => {
         confirmations,
         counts: buildTaskCounts(tasks, confirmations),
         runner: summarizeRunner(events, tasks),
+        codex_thread: summarizeCodexThread(events, tasks),
         sms: smsHealth.summary,
         database: databaseHealth,
         last_activity_at: latestActivityAt(tasks, confirmations, events)
@@ -250,12 +251,61 @@ function buildTaskCounts(
       tasks.filter((task) => task.status === "needs_confirmation").length
     ),
     queued: tasks.filter((task) => task.status === "queued").length,
+    waiting_for_codex_chat: tasks.filter(
+      (task) => task.execution_target === "codex_thread" && task.status === "queued"
+    ).length,
     blocked_failed: tasks.filter((task) =>
       ["blocked", "failed"].includes(task.status)
     ).length,
     done: tasks.filter((task) =>
       ["succeeded", "cancelled"].includes(task.status)
     ).length
+  };
+}
+
+function summarizeCodexThread(
+  events: AuditEventRecord[],
+  tasks: DeveloperTaskRecord[]
+): Record<string, unknown> {
+  const bridgeEvent = events.find((event) =>
+    event.event_type.startsWith("codex_thread.")
+  );
+  const queued = tasks.filter(
+    (task) => task.execution_target === "codex_thread" && task.status === "queued"
+  );
+  const running = tasks.find(
+    (task) =>
+      task.execution_target === "codex_thread" && task.status === "running"
+  );
+  const staleThresholdMs = Number(
+    process.env.CODEX_THREAD_STALE_AFTER_MS ?? 15 * 60 * 1000
+  );
+  const oldestQueued = queued
+    .map((task) => task.created_at)
+    .sort()
+    .at(0);
+  const stale =
+    Boolean(oldestQueued) &&
+    Date.now() - new Date(oldestQueued!).getTime() > staleThresholdMs;
+
+  return {
+    enabled: isEnabled(process.env.CODEX_THREAD_BRIDGE_ENABLED),
+    status: running
+      ? "claimed"
+      : queued.length
+        ? stale
+          ? "waiting_stale"
+          : "waiting"
+        : bridgeEvent
+          ? "seen"
+          : "idle",
+    waiting_count: queued.length,
+    active_task_id: running?.id ?? null,
+    active_task_title: running?.title ?? null,
+    oldest_waiting_at: oldestQueued ?? null,
+    stale,
+    last_event_type: bridgeEvent?.event_type ?? null,
+    last_seen_at: bridgeEvent?.created_at ?? null
   };
 }
 
@@ -294,4 +344,8 @@ function latestActivityAt(
 
 function stringField(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function isEnabled(value: string | undefined): boolean {
+  return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
 }

@@ -91,6 +91,7 @@ type TaskRecord = {
   structured_request: DeveloperTask;
   status: string;
   permission_required: string;
+  execution_target: "runner" | "codex_thread";
   repo_id: string | null;
   created_at: string;
   updated_at: string;
@@ -121,6 +122,19 @@ type ExecutionRun = {
   final_summary: string | null;
 };
 
+type CodexThreadJob = {
+  id: string;
+  task_id: string;
+  status: string;
+  thread_label: string;
+  claimed_at: string | null;
+  completed_at: string | null;
+  heartbeat_at: string | null;
+  final_summary: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type DesktopState = {
   task_id: string;
   run_id: string | null;
@@ -137,6 +151,7 @@ type TaskStatusData = {
   task: TaskRecord;
   latest_events: AuditEvent[];
   runs: ExecutionRun[];
+  codex_thread_job?: CodexThreadJob;
   confirmation?: Confirmation;
   final_summary?: string;
 };
@@ -156,6 +171,17 @@ type OverviewData = TaskListData & {
     last_seen_at: string | null;
     active_task_id: string | null;
     active_task_title: string | null;
+  };
+  codex_thread: {
+    enabled: boolean;
+    status: string;
+    waiting_count: number;
+    active_task_id: string | null;
+    active_task_title: string | null;
+    oldest_waiting_at: string | null;
+    stale: boolean;
+    last_event_type: string | null;
+    last_seen_at: string | null;
   };
   sms: SmsOverview;
   database: {
@@ -823,6 +849,7 @@ const renderDashboard = (): string => `
       ${renderSystemPill("VOICE", formatStatus(state.status), state.statusDetail, statusTone(state.status))}
       ${renderSystemPill("SMS", smsStatusLabel(), smsStatusDetail(), smsTone())}
       ${renderSystemPill("VAPI", shortId(state.config?.assistantId ?? ""), state.config?.backendUrl ?? "", state.vapi ? "ok" : "warn")}
+      ${renderSystemPill("CODEX CHAT", codexThreadStatusLabel(), codexThreadStatusDetail(), codexThreadTone())}
       ${renderSystemPill("LOCAL BRIDGE", runnerStatusLabel(), runnerStatusDetail(), runnerTone())}
       ${renderSystemPill("RAILWAY DB", databaseStatusLabel(), databaseStatusDetail(), databaseTone())}
       ${renderSystemPill("APPROVALS", `${state.confirmations.length} pending`, approvalDetail(), state.confirmations.length ? "warn" : "ok")}
@@ -918,8 +945,23 @@ const renderAttentionBanner = (): string => {
     items.push(`${state.confirmations.length} approval${state.confirmations.length === 1 ? "" : "s"} waiting.`);
   }
 
-  if (state.tasks.some((task) => task.status === "queued") && runnerTone() === "warn") {
+  if (
+    state.tasks.some(
+      (task) => task.status === "queued" && task.execution_target === "runner"
+    ) &&
+    runnerTone() === "warn"
+  ) {
     items.push("Queued work is waiting for the local bridge or runner.");
+  }
+
+  if (state.overview?.codex_thread.waiting_count) {
+    items.push(
+      `${state.overview.codex_thread.waiting_count} task${state.overview.codex_thread.waiting_count === 1 ? "" : "s"} waiting for this Codex chat.`
+    );
+  }
+
+  if (state.overview?.codex_thread.stale) {
+    items.push("A Codex chat task has been waiting longer than expected.");
   }
 
   if (!state.smsHealth?.summary.configured) {
@@ -998,7 +1040,7 @@ const renderTaskGroups = (): string => {
 const renderTaskRow = (task: TaskRecord): string => {
   const active = state.selectedTaskId === task.id ? "active" : "";
   const runner =
-    active && state.taskDetail ? describeRunner(state.taskDetail) : "Awaiting claim";
+    active && state.taskDetail ? describeRunner(state.taskDetail) : taskOwnerLabel(task);
   const latestDesktop =
     active && task.normalized_action === "desktop_control"
       ? state.desktopState?.latest_action
@@ -1042,11 +1084,13 @@ const renderTaskDetail = (): string => {
     </div>
     <dl class="detail-grid">
       <div><dt>Action</dt><dd>${escapeHtml(formatLabel(task.normalized_action))}</dd></div>
+      <div><dt>Target</dt><dd>${escapeHtml(formatLabel(task.execution_target))}</dd></div>
       <div><dt>Permission</dt><dd>${escapeHtml(formatLabel(task.permission_required))}</dd></div>
       <div><dt>Confidence</dt><dd>${escapeHtml(formatPercent(structured.confidence))}</dd></div>
       <div><dt>Repo Hint</dt><dd>${escapeHtml(structured.repoAlias ?? "No explicit hint")}</dd></div>
       ${renderDesktopFields(structured)}
       <div><dt>Runner</dt><dd>${escapeHtml(describeRunner(detail))}</dd></div>
+      ${renderCodexThreadFields(detail)}
       <div><dt>Updated</dt><dd>${escapeHtml(formatTime(task.updated_at))}</dd></div>
     </dl>
     ${
@@ -1102,6 +1146,19 @@ const renderDesktopFields = (task: DeveloperTask): string => {
     <div><dt>Risk</dt><dd>${escapeHtml(formatLabel(task.riskLevel ?? "low"))}</dd></div>
     <div><dt>Approved</dt><dd>${task.desktopApprovalGranted ? "Yes" : "No"}</dd></div>
     <div><dt>Current URL</dt><dd>${escapeHtml(state.desktopState?.current_url ?? "Waiting for browser state")}</dd></div>
+  `;
+};
+
+const renderCodexThreadFields = (detail: TaskStatusData): string => {
+  if (detail.task.execution_target !== "codex_thread") {
+    return "";
+  }
+
+  const job = detail.codex_thread_job;
+
+  return `
+    <div><dt>Codex Chat</dt><dd>${escapeHtml(jobStatusLabel(job))}</dd></div>
+    <div><dt>Thread Seen</dt><dd>${escapeHtml(job?.heartbeat_at ? formatTime(job.heartbeat_at) : "Waiting for heartbeat")}</dd></div>
   `;
 };
 
@@ -1270,6 +1327,10 @@ const renderInlineChip = (value: string): string =>
   )}</span>`;
 
 const describeRunner = (detail: TaskStatusData): string => {
+  if (detail.task.execution_target === "codex_thread") {
+    return jobStatusLabel(detail.codex_thread_job);
+  }
+
   const claimed = detail.latest_events.find(
     (event) => event.event_type === "runner.claimed_task"
   );
@@ -1287,6 +1348,26 @@ const describeRunner = (detail: TaskStatusData): string => {
   }
 
   return "Not claimed yet";
+};
+
+const jobStatusLabel = (job?: CodexThreadJob): string => {
+  if (!job) {
+    return "Waiting for Codex chat job";
+  }
+
+  if (job.status === "queued") {
+    return "Waiting for Codex chat";
+  }
+
+  if (job.status === "running") {
+    return `Claimed by ${job.thread_label}`;
+  }
+
+  if (job.final_summary) {
+    return job.final_summary;
+  }
+
+  return `${formatLabel(job.status)} in ${job.thread_label}`;
 };
 
 const renderAuditEvent = (event: AuditEvent): string => {
@@ -1438,6 +1519,20 @@ const nextActionLabel = (detail: TaskStatusData): string => {
     return "Approval required before the next sensitive action.";
   }
 
+  if (
+    detail.task.execution_target === "codex_thread" &&
+    detail.task.status === "queued"
+  ) {
+    return "Waiting for this Codex chat to claim the task.";
+  }
+
+  if (
+    detail.task.execution_target === "codex_thread" &&
+    detail.task.status === "running"
+  ) {
+    return "Claimed by this Codex chat.";
+  }
+
   if (detail.task.status === "queued") {
     return "Waiting for a runner to claim the task.";
   }
@@ -1455,6 +1550,22 @@ const nextActionLabel = (detail: TaskStatusData): string => {
   }
 
   return "Standing by.";
+};
+
+const taskOwnerLabel = (task: TaskRecord): string => {
+  if (task.execution_target === "codex_thread") {
+    if (task.status === "queued") {
+      return "Waiting for Codex chat";
+    }
+
+    if (task.status === "running") {
+      return "Claimed by Codex chat";
+    }
+
+    return "Codex chat";
+  }
+
+  return "Awaiting claim";
 };
 
 const approvalDetail = (): string => {
@@ -1532,9 +1643,77 @@ const smsTone = (): UiTone => {
   return "idle";
 };
 
+const codexThreadStatusLabel = (): string => {
+  const bridge = state.overview?.codex_thread;
+
+  if (!bridge?.enabled) {
+    return "Disabled";
+  }
+
+  if (bridge.status === "claimed") {
+    return "Claimed";
+  }
+
+  if (bridge.status === "waiting_stale") {
+    return "Waiting stale";
+  }
+
+  if (bridge.status === "waiting") {
+    return `${bridge.waiting_count} waiting`;
+  }
+
+  return bridge.last_seen_at ? "Standing by" : "No heartbeat";
+};
+
+const codexThreadStatusDetail = (): string => {
+  const bridge = state.overview?.codex_thread;
+
+  if (!bridge?.enabled) {
+    return "Set CODEX_THREAD_BRIDGE_ENABLED=true to route repo work here.";
+  }
+
+  if (bridge.active_task_title) {
+    return bridge.active_task_title;
+  }
+
+  if (bridge.waiting_count) {
+    return `Oldest task waiting since ${formatTime(bridge.oldest_waiting_at)}.`;
+  }
+
+  if (bridge.last_seen_at) {
+    return `${bridge.last_event_type ?? "codex thread event"} at ${formatTime(bridge.last_seen_at)}.`;
+  }
+
+  return "No Codex-thread claim event seen yet.";
+};
+
+const codexThreadTone = (): UiTone => {
+  const bridge = state.overview?.codex_thread;
+
+  if (!bridge?.enabled) {
+    return "idle";
+  }
+
+  if (bridge.status === "claimed") {
+    return "active";
+  }
+
+  if (bridge.status === "waiting_stale") {
+    return "danger";
+  }
+
+  if (bridge.status === "waiting") {
+    return "warn";
+  }
+
+  return bridge.last_seen_at ? "ok" : "idle";
+};
+
 const runnerStatusLabel = (): string => {
   const runner = state.overview?.runner;
-  const task = state.tasks.find((item) => item.status === "running");
+  const task = state.tasks.find(
+    (item) => item.status === "running" && item.execution_target === "runner"
+  );
 
   if (task) {
     return runner?.runner_id || "Running";
@@ -1544,7 +1723,11 @@ const runnerStatusLabel = (): string => {
     return runner.runner_id;
   }
 
-  if (state.tasks.some((item) => item.status === "queued")) {
+  if (
+    state.tasks.some(
+      (item) => item.status === "queued" && item.execution_target === "runner"
+    )
+  ) {
     return "Waiting";
   }
 
@@ -1553,13 +1736,17 @@ const runnerStatusLabel = (): string => {
 
 const runnerStatusDetail = (): string => {
   const runner = state.overview?.runner;
-  const running = state.tasks.find((task) => task.status === "running");
+  const running = state.tasks.find(
+    (task) => task.status === "running" && task.execution_target === "runner"
+  );
 
   if (running) {
     return running.title;
   }
 
-  const queued = state.tasks.filter((task) => task.status === "queued").length;
+  const queued = state.tasks.filter(
+    (task) => task.status === "queued" && task.execution_target === "runner"
+  ).length;
 
   if (queued) {
     return `${queued} queued task${queued === 1 ? "" : "s"} ready for pickup.`;
@@ -1577,11 +1764,19 @@ const runnerStatusDetail = (): string => {
 };
 
 const runnerTone = (): UiTone => {
-  if (state.tasks.some((task) => task.status === "running")) {
+  if (
+    state.tasks.some(
+      (task) => task.status === "running" && task.execution_target === "runner"
+    )
+  ) {
     return "active";
   }
 
-  if (state.tasks.some((task) => task.status === "queued")) {
+  if (
+    state.tasks.some(
+      (task) => task.status === "queued" && task.execution_target === "runner"
+    )
+  ) {
     return state.overview?.runner.runner_id ? "warn" : "danger";
   }
 
@@ -1672,6 +1867,9 @@ const eventTitle = (event: AuditEvent): string => {
     "desktop.confirmation_required": "Desktop approval required",
     "desktop.blocked": "Desktop blocked",
     "desktop.snapshot_failed": "Desktop snapshot failed",
+    "codex_thread.claimed": "Codex chat claimed task",
+    "codex_thread.completed": "Codex chat completed task",
+    "codex_thread.failed": "Codex chat failed task",
     "runner.claimed_task": "Runner claimed task",
     "run.started": "Run started",
     "run.succeeded": "Run succeeded",
@@ -1704,6 +1902,10 @@ const eventSummary = (
 
   if (event.event_type === "runner.claimed_task") {
     return `${stringField(payload.runner_id) ?? "Runner"} claimed this task.`;
+  }
+
+  if (event.event_type === "codex_thread.claimed") {
+    return `${stringField(payload.thread_label) ?? "Codex chat"} claimed this task.`;
   }
 
   if (event.event_type === "desktop.observe") {

@@ -9,6 +9,7 @@ import type {
   DeveloperTask,
   DeveloperTaskRecord,
   PermissionLevel,
+  TaskExecutionTarget,
   TaskCreationResult,
   TaskStatusResult
 } from "../../types/operator.js";
@@ -43,6 +44,7 @@ export const taskService = {
       codeActionNeedsTarget ||
       repoAmbiguityNeedsConfirmation;
     const taskStatus = needsConfirmation ? "needs_confirmation" : "queued";
+    const executionTarget = chooseExecutionTarget(interpreted);
 
     const task = await database.createTask({
       session_id: sessionId ?? null,
@@ -53,8 +55,16 @@ export const taskService = {
       normalized_action: interpreted.action,
       structured_request: interpreted as unknown as Record<string, unknown>,
       status: taskStatus,
-      permission_required: interpreted.permissionRequired
+      permission_required: interpreted.permissionRequired,
+      execution_target: executionTarget
     });
+
+    if (executionTarget === "codex_thread") {
+      await database.createCodexThreadJob({
+        task_id: task.id,
+        thread_label: process.env.CODEX_THREAD_LABEL || "CallAI Codex thread"
+      });
+    }
 
     await auditLog.log({
       task_id: task.id,
@@ -62,6 +72,7 @@ export const taskService = {
       event_type: "task.created",
       payload: {
         interpreted,
+        execution_target: executionTarget,
         repo_resolution: {
           reason: repoResolution.reason,
           confidence: repoResolution.confidence,
@@ -93,6 +104,7 @@ export const taskService = {
           interpreted.permissionRequired === "destructive_admin" ? "warn" : "info",
         payload: {
           confirmation_id: confirmation.id,
+          execution_target: executionTarget,
           risk: confirmation.risk
         }
       });
@@ -106,7 +118,8 @@ export const taskService = {
         session_id: sessionId ?? null,
         event_type: "task.queued",
         payload: {
-          executor: chooseExecutor(interpreted)
+          executor: chooseExecutor(interpreted, executionTarget),
+          execution_target: executionTarget
         }
       });
     }
@@ -114,6 +127,7 @@ export const taskService = {
     return {
       task_id: task.id,
       status: task.status,
+      execution_target: task.execution_target,
       interpreted_task: interpreted,
       needs_confirmation: needsConfirmation,
       ...(confirmation ? { confirmation_id: confirmation.id } : {}),
@@ -137,12 +151,20 @@ export const taskService = {
       database.listExecutionRuns(taskId),
       database.getPendingConfirmationForTask(taskId)
     ]);
-    const finalSummary = runs.find((run) => run.final_summary)?.final_summary;
+    const codexThreadJob =
+      task.execution_target === "codex_thread"
+        ? await database.getCodexThreadJob(taskId)
+        : null;
+    const finalSummary =
+      runs.find((run) => run.final_summary)?.final_summary ??
+      codexThreadJob?.final_summary ??
+      undefined;
 
     return {
       task,
       latest_events: latestEvents,
       runs,
+      ...(codexThreadJob ? { codex_thread_job: codexThreadJob } : {}),
       ...(confirmation ? { confirmation } : {}),
       ...(finalSummary ? { final_summary: finalSummary } : {})
     };
@@ -159,6 +181,13 @@ export const taskService = {
     }
 
     const updated = await database.updateTask(task.id, { status: "queued" });
+
+    if (updated.execution_target === "codex_thread") {
+      await database.createCodexThreadJob({
+        task_id: updated.id,
+        thread_label: process.env.CODEX_THREAD_LABEL || "CallAI Codex thread"
+      });
+    }
 
     await auditLog.log({
       task_id: task.id,
@@ -223,11 +252,19 @@ export const taskService = {
         : {})
     });
 
+    if (queued.execution_target === "codex_thread") {
+      await database.createCodexThreadJob({
+        task_id: queued.id,
+        thread_label: process.env.CODEX_THREAD_LABEL || "CallAI Codex thread"
+      });
+    }
+
     await auditLog.log({
       task_id: task.id,
       event_type: "confirmation.approved",
       payload: {
-        confirmation_id: confirmation.id
+        confirmation_id: confirmation.id,
+        execution_target: queued.execution_target
       }
     });
 
@@ -353,7 +390,29 @@ const describeRisk = (task: DeveloperTask, repoReason: string): string => {
   return "Proceeding requires user confirmation.";
 };
 
-const chooseExecutor = (task: DeveloperTask): string => {
+const chooseExecutionTarget = (task: DeveloperTask): TaskExecutionTarget => {
+  if (!isEnabled(process.env.CODEX_THREAD_BRIDGE_ENABLED)) {
+    return "runner";
+  }
+
+  if (task.action === "desktop_control" || task.action === "send_chat_message") {
+    return "runner";
+  }
+
+  return "codex_thread";
+};
+
+const isEnabled = (value: string | undefined): boolean =>
+  ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
+
+const chooseExecutor = (
+  task: DeveloperTask,
+  executionTarget: TaskExecutionTarget = "runner"
+): string => {
+  if (executionTarget === "codex_thread") {
+    return "codex_thread";
+  }
+
   if (task.action === "send_chat_message") {
     return "chat";
   }

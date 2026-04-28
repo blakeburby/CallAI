@@ -15,6 +15,7 @@ flowchart LR
   API --> RailwayDB["Railway Postgres tasks and audit log"]
   Runner["Railway agent-runner"] --> RailwayDB
   MacBridge["Mac local bridge"] --> RailwayDB
+  CodexThread["Codex thread heartbeat"] --> RailwayDB
   Runner --> Repo["Repo workspace"]
   MacBridge --> LocalRepo["Local repo workspace"]
   Runner --> Codex["codex-bridge"]
@@ -57,6 +58,15 @@ npm run local-bridge
 ```
 
 For local bridge development without a build, use `npm run local-bridge:dev`.
+
+Route queued repo work into this Codex chat:
+
+```bash
+CODEX_THREAD_BRIDGE_ENABLED=true
+npm run codex-thread:claim
+npm run codex-thread:complete -- <task_id> "Summary of what changed"
+npm run codex-thread:fail -- <task_id> "Reason it could not be completed"
+```
 
 ## Required Production Services
 
@@ -210,6 +220,28 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.blake.callai.local-bri
 ```
 
 The Mac must be awake, online, and logged in for this LaunchAgent to run.
+
+## Codex Thread Bridge
+
+When `CODEX_THREAD_BRIDGE_ENABLED=true`, CallAI routes repo/code tasks to this
+project's Codex thread instead of letting background runners claim them. Desktop
+Chrome work and project-chat updates still use the existing runner paths.
+
+The bridge uses Railway Postgres as the inbox. A Codex heartbeat automation runs
+from `/Users/blakeburby/Desktop/CallAI-main`, claims one waiting task with
+`npm run codex-thread:claim`, completes the work in this chat, then records the
+result with `npm run codex-thread:complete` or `npm run codex-thread:fail`.
+
+Useful env:
+
+```bash
+CODEX_THREAD_BRIDGE_ENABLED=true
+CODEX_THREAD_LABEL="CallAI Codex thread"
+CODEX_THREAD_STALE_AFTER_MS=900000
+```
+
+Background runners skip `execution_target=codex_thread` tasks, so repo work
+cannot be silently stolen by Railway while it is waiting for this chat.
 
 ## SMS Text Control
 
