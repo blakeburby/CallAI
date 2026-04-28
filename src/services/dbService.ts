@@ -3,6 +3,7 @@ import type { Pool as PgPool, PoolClient, QueryResultRow } from "pg";
 import type {
   AuditEventRecord,
   ChatChannelRecord,
+  CodexThreadJobRecord,
   ConfirmationRequestRecord,
   DesktopSnapshotRecord,
   DeveloperTaskRecord,
@@ -14,6 +15,7 @@ import type {
   RunnerTaskScope,
   SmsConversationRecord,
   SmsMessageRecord,
+  TaskExecutionTarget,
   TaskStatus,
   VoiceSessionRecord
 } from "../types/operator.js";
@@ -33,6 +35,7 @@ type CreateTaskRow = {
   structured_request: JsonRecord;
   status: TaskStatus;
   permission_required: PermissionLevel;
+  execution_target?: TaskExecutionTarget;
 };
 
 type AuditInput = {
@@ -92,6 +95,7 @@ type SmsMessageInput = {
 type InMemoryStore = {
   auditEvents: AuditEventRecord[];
   chatChannels: ChatChannelRecord[];
+  codexThreadJobs: CodexThreadJobRecord[];
   confirmations: ConfirmationRequestRecord[];
   desktopSnapshots: DesktopSnapshotRecord[];
   executionRuns: ExecutionRunRecord[];
@@ -124,6 +128,7 @@ export const db = createPostgresPool();
 const memoryStore: InMemoryStore = {
   auditEvents: [],
   chatChannels: [],
+  codexThreadJobs: [],
   confirmations: [],
   desktopSnapshots: [],
   executionRuns: [],
@@ -389,9 +394,10 @@ export const database = {
       return queryRequired<DeveloperTaskRecord>(
         `insert into tasks (
            session_id, user_id, repo_id, title, raw_request,
-           normalized_action, structured_request, status, permission_required
+           normalized_action, structured_request, status, permission_required,
+           execution_target
          )
-         values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+         values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
          returning *`,
         [
           input.session_id ?? null,
@@ -402,7 +408,8 @@ export const database = {
           input.normalized_action,
           JSON.stringify(input.structured_request),
           input.status,
-          input.permission_required
+          input.permission_required,
+          input.execution_target ?? "runner"
         ],
         "create task"
       );
@@ -421,6 +428,7 @@ export const database = {
         input.structured_request as DeveloperTaskRecord["structured_request"],
       status: input.status,
       permission_required: input.permission_required,
+      execution_target: input.execution_target ?? "runner",
       created_at: timestamp,
       updated_at: timestamp
     };
@@ -459,7 +467,12 @@ export const database = {
     patch: Partial<
       Pick<
         DeveloperTaskRecord,
-        "repo_id" | "status" | "structured_request" | "title" | "permission_required"
+        | "repo_id"
+        | "status"
+        | "structured_request"
+        | "title"
+        | "permission_required"
+        | "execution_target"
       >
     >
   ): Promise<DeveloperTaskRecord> {
@@ -473,7 +486,8 @@ export const database = {
               ? undefined
               : JSON.stringify(patch.structured_request),
           title: patch.title,
-          permission_required: patch.permission_required
+          permission_required: patch.permission_required,
+          execution_target: patch.execution_target
         },
         {
           structured_request: "jsonb"
@@ -586,6 +600,347 @@ export const database = {
     return memoryStore.executionRuns.filter((run) => run.task_id === taskId);
   },
 
+  async createCodexThreadJob(input: {
+    task_id: string;
+    thread_label?: string;
+  }): Promise<CodexThreadJobRecord> {
+    if (db) {
+      return queryRequired<CodexThreadJobRecord>(
+        `insert into codex_thread_jobs (task_id, thread_label)
+         values ($1, $2)
+         on conflict (task_id) do update
+           set thread_label = excluded.thread_label,
+               status = 'queued',
+               claimed_at = null,
+               completed_at = null,
+               heartbeat_at = null,
+               final_summary = null,
+               updated_at = now()
+         returning *`,
+        [input.task_id, input.thread_label ?? "CallAI Codex thread"],
+        "create codex thread job"
+      );
+    }
+
+    const existing = memoryStore.codexThreadJobs.find(
+      (job) => job.task_id === input.task_id
+    );
+
+    if (existing) {
+      existing.thread_label = input.thread_label ?? existing.thread_label;
+      existing.status = "queued";
+      existing.claimed_at = null;
+      existing.completed_at = null;
+      existing.heartbeat_at = null;
+      existing.final_summary = null;
+      existing.updated_at = now();
+      return existing;
+    }
+
+    const timestamp = now();
+    const job: CodexThreadJobRecord = {
+      id: randomUUID(),
+      task_id: input.task_id,
+      status: "queued",
+      thread_label: input.thread_label ?? "CallAI Codex thread",
+      claimed_at: null,
+      completed_at: null,
+      heartbeat_at: null,
+      final_summary: null,
+      created_at: timestamp,
+      updated_at: timestamp
+    };
+    memoryStore.codexThreadJobs.unshift(job);
+    return job;
+  },
+
+  async getCodexThreadJob(
+    taskId: string
+  ): Promise<CodexThreadJobRecord | null> {
+    if (db) {
+      return queryOne<CodexThreadJobRecord>(
+        `select * from codex_thread_jobs
+         where task_id = $1
+         limit 1`,
+        [taskId],
+        "get codex thread job"
+      );
+    }
+
+    return memoryStore.codexThreadJobs.find((job) => job.task_id === taskId) ?? null;
+  },
+
+  async claimNextCodexThreadTask(input: {
+    thread_label?: string;
+  } = {}): Promise<{
+    task: DeveloperTaskRecord;
+    run: ExecutionRunRecord;
+    job: CodexThreadJobRecord;
+  } | null> {
+    const threadLabel = input.thread_label ?? "CallAI Codex thread";
+    const staleMs = Number(process.env.CODEX_THREAD_STALE_AFTER_MS ?? 15 * 60 * 1000);
+
+    if (db) {
+      const client = await db.connect();
+
+      try {
+        await client.query("begin");
+
+        // Reset stale running jobs back to queued so they can be reclaimed.
+        const staleJobs = await queryMany<{ task_id: string }>(
+          `update codex_thread_jobs
+           set status = 'queued',
+               claimed_at = null,
+               heartbeat_at = null,
+               updated_at = now()
+           where status = 'running'
+             and heartbeat_at < now() - ($1 * interval '1 millisecond')
+           returning task_id`,
+          [staleMs],
+          "reset stale codex thread jobs",
+          client
+        );
+
+        if (staleJobs.length > 0) {
+          const staleTaskIds = staleJobs.map((row: { task_id: string }) => row.task_id);
+          await client.query(
+            `update tasks set status = 'queued', updated_at = now()
+             where id = any($1) and status = 'running'`,
+            [staleTaskIds]
+          );
+        }
+
+        const task = await queryOne<DeveloperTaskRecord>(
+          `select tasks.*
+           from tasks
+           join codex_thread_jobs on codex_thread_jobs.task_id = tasks.id
+           where tasks.status = 'queued'
+             and tasks.execution_target = 'codex_thread'
+             and codex_thread_jobs.status = 'queued'
+           order by tasks.created_at asc
+           for update of tasks, codex_thread_jobs skip locked
+           limit 1`,
+          [],
+          "claim codex thread task lookup",
+          client
+        );
+
+        if (!task) {
+          await client.query("commit");
+          return null;
+        }
+
+        const claimedTask = await queryRequired<DeveloperTaskRecord>(
+          `update tasks
+           set status = 'running', updated_at = now()
+           where id = $1
+           returning *`,
+          [task.id],
+          "claim codex thread task",
+          client
+        );
+
+        const job = await queryRequired<CodexThreadJobRecord>(
+          `update codex_thread_jobs
+           set status = 'running',
+               thread_label = $2,
+               claimed_at = now(),
+               heartbeat_at = now(),
+               updated_at = now()
+           where task_id = $1
+           returning *`,
+          [task.id, threadLabel],
+          "claim codex thread job",
+          client
+        );
+
+        const run = await queryRequired<ExecutionRunRecord>(
+          `insert into execution_runs (task_id, executor, status, started_at)
+           values ($1, 'codex_thread', 'running', now())
+           returning *`,
+          [task.id],
+          "create codex thread run",
+          client
+        );
+
+        await client.query("commit");
+        return { task: claimedTask, run, job };
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    // Reset stale running jobs back to queued in the in-memory store.
+    const staleThreshold = new Date(Date.now() - staleMs).toISOString();
+    for (const staleJob of memoryStore.codexThreadJobs) {
+      if (
+        staleJob.status === "running" &&
+        staleJob.heartbeat_at !== null &&
+        staleJob.heartbeat_at < staleThreshold
+      ) {
+        staleJob.status = "queued";
+        staleJob.claimed_at = null;
+        staleJob.heartbeat_at = null;
+        staleJob.updated_at = now();
+        const staleTask = memoryStore.tasks.find((t) => t.id === staleJob.task_id);
+        if (staleTask && staleTask.status === "running") {
+          staleTask.status = "queued";
+          staleTask.updated_at = now();
+        }
+      }
+    }
+
+    const task = memoryStore.tasks
+      .slice()
+      .reverse()
+      .find((item) => {
+        const job = memoryStore.codexThreadJobs.find(
+          (candidate) => candidate.task_id === item.id
+        );
+        return (
+          item.status === "queued" &&
+          item.execution_target === "codex_thread" &&
+          job?.status === "queued"
+        );
+      });
+
+    if (!task) {
+      return null;
+    }
+
+    const job = memoryStore.codexThreadJobs.find(
+      (candidate) => candidate.task_id === task.id
+    );
+
+    if (!job) {
+      return null;
+    }
+
+    task.status = "running";
+    task.updated_at = now();
+    Object.assign(job, {
+      status: "running" as TaskStatus,
+      thread_label: threadLabel,
+      claimed_at: now(),
+      heartbeat_at: now(),
+      updated_at: now()
+    });
+
+    const run = await database.createExecutionRun({
+      task_id: task.id,
+      executor: "codex_thread",
+      status: "running",
+      started_at: now()
+    });
+
+    return { task, run, job };
+  },
+
+  async finishCodexThreadTask(input: {
+    task_id: string;
+    status: Extract<TaskStatus, "succeeded" | "failed" | "blocked">;
+    summary: string;
+  }): Promise<{
+    task: DeveloperTaskRecord;
+    job: CodexThreadJobRecord | null;
+    run: ExecutionRunRecord | null;
+  }> {
+    if (db) {
+      const client = await db.connect();
+
+      try {
+        await client.query("begin");
+        const task = await queryRequired<DeveloperTaskRecord>(
+          `update tasks
+           set status = $2, updated_at = now()
+           where id = $1
+           returning *`,
+          [input.task_id, input.status],
+          "finish codex thread task",
+          client
+        );
+        const job = await queryOne<CodexThreadJobRecord>(
+          `update codex_thread_jobs
+           set status = $2,
+               completed_at = now(),
+               heartbeat_at = now(),
+               final_summary = $3,
+               updated_at = now()
+           where task_id = $1
+           returning *`,
+          [input.task_id, input.status, input.summary],
+          "finish codex thread job",
+          client
+        );
+        const run = await queryOne<ExecutionRunRecord>(
+          `update execution_runs
+           set status = $2,
+               finished_at = now(),
+               final_summary = $3
+           where id = (
+             select id from execution_runs
+             where task_id = $1 and executor = 'codex_thread'
+             order by started_at desc nulls last
+             limit 1
+           )
+           returning *`,
+          [input.task_id, input.status, input.summary],
+          "finish codex thread run",
+          client
+        );
+
+        await client.query("commit");
+        return { task, job, run };
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    const task = memoryStore.tasks.find((item) => item.id === input.task_id);
+
+    if (!task) {
+      throw new Error(`Task not found: ${input.task_id}`);
+    }
+
+    task.status = input.status;
+    task.updated_at = now();
+
+    const job =
+      memoryStore.codexThreadJobs.find((item) => item.task_id === input.task_id) ??
+      null;
+
+    if (job) {
+      Object.assign(job, {
+        status: input.status,
+        completed_at: now(),
+        heartbeat_at: now(),
+        final_summary: input.summary,
+        updated_at: now()
+      });
+    }
+
+    const run =
+      memoryStore.executionRuns.find(
+        (item) => item.task_id === input.task_id && item.executor === "codex_thread"
+      ) ?? null;
+
+    if (run) {
+      Object.assign(run, {
+        status: input.status,
+        finished_at: now(),
+        final_summary: input.summary
+      });
+    }
+
+    return { task, job, run };
+  },
+
   async upsertDesktopSnapshot(
     input: DesktopSnapshotInput
   ): Promise<DesktopSnapshotRecord> {
@@ -681,6 +1036,7 @@ export const database = {
         const task = await queryOne<DeveloperTaskRecord>(
           `select * from tasks
            where status = 'queued'
+             and execution_target = 'runner'
              ${scopeFilter.sql}
              ${desktopFilter}
            order by created_at asc
@@ -731,6 +1087,7 @@ export const database = {
       .find(
         (item) =>
           item.status === "queued" &&
+          item.execution_target === "runner" &&
           taskMatchesScope(item, scope) &&
           (options.allowDesktopControl ||
             item.structured_request.action !== "desktop_control")
