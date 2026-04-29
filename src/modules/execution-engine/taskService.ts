@@ -109,7 +109,7 @@ export const taskService = {
         }
       });
 
-      if (input.source !== "sms") {
+      if (!["sms", "telegram", "web_chat"].includes(input.source ?? "")) {
         void smsNotifier.taskNeedsConfirmation(task, confirmation);
       }
     } else {

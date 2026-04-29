@@ -4,12 +4,17 @@ import type { AddressInfo } from "node:net";
 
 process.env.DATABASE_URL = "";
 process.env.FRONTEND_PASSCODE = "test-passcode";
+process.env.OPENAI_API_KEY = "";
+process.env.TELEGRAM_BOT_TOKEN = "";
+process.env.TELEGRAM_OWNER_USER_ID = "12345";
+process.env.TELEGRAM_WEBHOOK_SECRET = "telegram-secret";
 process.env.VAPI_PUBLIC_KEY = "public-test-key";
 process.env.VAPI_ASSISTANT_ID = "assistant-test-id";
 process.env.VAPI_ASSISTANT_NAME = "Jarvis Test";
 
 const { app } = await import("./app.js");
 const { database } = await import("./services/dbService.js");
+const { smsChatService } = await import("./modules/sms/smsChatService.js");
 
 const withServer = async <T>(
   callback: (baseUrl: string) => Promise<T>
@@ -27,6 +32,22 @@ const withServer = async <T>(
   }
 };
 
+const login = async (baseUrl: string): Promise<string> => {
+  const response = await fetch(`${baseUrl}/frontend/login`, {
+    body: JSON.stringify({ passcode: "test-passcode" }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST"
+  });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get("set-cookie");
+  assert.ok(cookie);
+  return cookie;
+};
+
+const taskCount = async (): Promise<number> => {
+  return (await database.listTasks(200)).length;
+};
+
 test("frontend bootstrap returns logged-out 200 and authenticated config", async () => {
   await withServer(async (baseUrl) => {
     const loggedOut = await fetch(`${baseUrl}/frontend/bootstrap`);
@@ -41,14 +62,7 @@ test("frontend bootstrap returns logged-out 200 and authenticated config", async
     const protectedConfig = await fetch(`${baseUrl}/frontend/config`);
     assert.equal(protectedConfig.status, 401);
 
-    const login = await fetch(`${baseUrl}/frontend/login`, {
-      body: JSON.stringify({ passcode: "test-passcode" }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    });
-    assert.equal(login.status, 200);
-    const cookie = login.headers.get("set-cookie");
-    assert.ok(cookie);
+    const cookie = await login(baseUrl);
 
     const loggedIn = await fetch(`${baseUrl}/frontend/bootstrap`, {
       headers: { cookie }
@@ -104,4 +118,204 @@ test("codex-thread heartbeat refreshes the active job and run without duplicate 
     thread_label: "test bridge"
   });
   assert.equal(duplicateClaim, null);
+});
+
+test("operator chat shares Jarvis history and only creates tasks for task requests", async () => {
+  await withServer(async (baseUrl) => {
+    const cookie = await login(baseUrl);
+    const unauthenticated = await fetch(`${baseUrl}/operator/chat/messages`);
+    assert.equal(unauthenticated.status, 401);
+
+    const beforeHelloTasks = await taskCount();
+    const hello = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({ message: "hello" }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(hello.status, 200);
+    const helloPayload = await hello.json();
+    assert.equal(helloPayload.success, true);
+    assert.equal(helloPayload.data.task_id, null);
+    assert.match(helloPayload.data.reply, /Online|Jarvis/i);
+    assert.equal(await taskCount(), beforeHelloTasks);
+
+    const task = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({
+        message: "Inspect this repo and list its package scripts"
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(task.status, 200);
+    const taskPayload = await task.json();
+    assert.equal(taskPayload.success, true);
+    assert.ok(taskPayload.data.task_id);
+
+    const taskRecord = await database.getTask(taskPayload.data.task_id);
+    assert.ok(taskRecord);
+    assert.equal(await taskCount(), beforeHelloTasks + 1);
+
+    assert.ok(
+      taskPayload.data.messages.some(
+        (message: { task?: { id: string }; channel_kind: string }) =>
+          message.task?.id === taskPayload.data.task_id &&
+          message.channel_kind === "web"
+      )
+    );
+
+    const origins = await database.listChatTaskOrigins(taskPayload.data.task_id);
+    assert.equal(origins.length, 1);
+    assert.equal(origins[0]?.channel_kind, "web");
+  });
+});
+
+test("operator chat approval commands keep dangerous tasks behind gates", async () => {
+  await withServer(async (baseUrl) => {
+    const cookie = await login(baseUrl);
+    const create = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({
+        message: "Commit and push all current changes in this repo"
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(create.status, 200);
+    const createPayload = await create.json();
+    assert.ok(createPayload.data.task_id);
+    assert.match(createPayload.data.reply, /Approval needed/i);
+
+    const confirmation = await database.getPendingConfirmationForTask(
+      createPayload.data.task_id
+    );
+    assert.ok(confirmation);
+    const deny = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({ message: `deny ${confirmation.id.slice(-6)}` }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(deny.status, 200);
+    const denyPayload = await deny.json();
+    assert.match(denyPayload.data.reply, /Denied/i);
+
+    const deniedTask = await database.getTask(createPayload.data.task_id);
+    assert.equal(deniedTask?.status, "cancelled");
+  });
+});
+
+test("telegram webhook rejects non-owner users and accepts owner chat", async () => {
+  await withServer(async (baseUrl) => {
+    const rejected = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(999, 123, "hello")),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(rejected.status, 200);
+    assert.deepEqual(await rejected.json(), {
+      success: true,
+      accepted: false
+    });
+
+    const beforeOwnerTasks = await taskCount();
+    const accepted = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(12345, 67890, "hello")),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(accepted.status, 200);
+    const acceptedPayload = await accepted.json();
+    assert.deepEqual(acceptedPayload, {
+      success: true,
+      accepted: true,
+      task_id: null
+    });
+    assert.equal(await taskCount(), beforeOwnerTasks);
+
+    const sharedMessages = await database.listChatMessages({ limit: 20 });
+    assert.ok(
+      sharedMessages.some(
+        (message) => message.provider_message_id === "42" && message.body === "hello"
+      )
+    );
+  });
+});
+
+test("sms chat delegates message interpretation to the shared Jarvis service", async () => {
+  const beforeSmsTasks = await taskCount();
+  const reply = await smsChatService.handleInbound({
+    from: "+15555550123",
+    body: "hello",
+    messageSid: "SMsharedchat"
+  });
+  assert.match(reply, /Online|Jarvis/i);
+  assert.equal(await taskCount(), beforeSmsTasks);
+
+  const messages = await database.listChatMessages({ limit: 20 });
+  assert.ok(
+    messages.some(
+      (message) =>
+        message.provider_message_id === "SMsharedchat" && message.body === "hello"
+    )
+  );
+
+  const stopReply = await smsChatService.handleInbound({
+    from: "+15555550123",
+    body: "STOP",
+    messageSid: "SMsharedstop"
+  });
+  assert.match(stopReply, /paused/i);
+
+  const pausedReply = await smsChatService.handleInbound({
+    from: "+15555550123",
+    body: "hello",
+    messageSid: "SMsharedpaused"
+  });
+  assert.match(pausedReply, /paused/i);
+
+  const startReply = await smsChatService.handleInbound({
+    from: "+15555550123",
+    body: "START",
+    messageSid: "SMsharedstart"
+  });
+  assert.match(startReply, /active/i);
+});
+
+const telegramUpdate = (
+  fromId: number,
+  chatId: number,
+  text: string
+): Record<string, unknown> => ({
+  update_id: 1,
+  message: {
+    message_id: 42,
+    from: {
+      id: fromId,
+      first_name: "Blake",
+      is_bot: false
+    },
+    chat: {
+      id: chatId,
+      first_name: "Blake",
+      type: "private"
+    },
+    date: 1770000000,
+    text
+  }
 });

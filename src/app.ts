@@ -8,6 +8,7 @@ import { operatorRouter } from "./routes/operator.js";
 import { publicPagesRouter } from "./routes/publicPages.js";
 import { runnerRouter } from "./routes/runner.js";
 import { smsRouter } from "./routes/sms.js";
+import { telegramRouter } from "./routes/telegram.js";
 import { toolsRouter } from "./routes/tools.js";
 import { voiceRouter } from "./routes/voice.js";
 import { webhookRouter } from "./routes/webhook.js";
@@ -31,6 +32,7 @@ app.use(toolsRouter);
 app.use(voiceRouter);
 app.use(runnerRouter);
 app.use(smsRouter);
+app.use(telegramRouter);
 app.use(webhookRouter);
 app.use(express.static(publicDirectory));
 

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { auditLog } from "../modules/audit-log/auditLogService.js";
 import { taskService } from "../modules/execution-engine/taskService.js";
+import { jarvisChatService } from "../modules/jarvis-chat/jarvisChatService.js";
 import { smsService } from "../modules/sms/smsService.js";
 import { vapiCallService } from "../modules/voice-calls/vapiCallService.js";
 import { requireFrontendSession } from "../middleware/frontendSession.js";
@@ -18,6 +19,11 @@ import type {
 
 const createTaskSchema = z.object({
   utterance: z.string().min(3).max(5000),
+  repo_hint: z.string().min(1).max(200).optional()
+});
+
+const chatMessageSchema = z.object({
+  message: z.string().min(1).max(5000),
   repo_hint: z.string().min(1).max(200).optional()
 });
 
@@ -91,6 +97,43 @@ operatorRouter.get("/operator/tasks", async (_request, response, next) => {
       data: {
         tasks,
         confirmations
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+operatorRouter.get("/operator/chat/messages", async (_request, response, next) => {
+  try {
+    response.json({
+      success: true,
+      data: {
+        messages: await jarvisChatService.listMessages()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+operatorRouter.post("/operator/chat/messages", async (request, response, next) => {
+  try {
+    const body = chatMessageSchema.parse(request.body);
+    const result = await jarvisChatService.handleMessage({
+      channelKind: "web",
+      externalId: "operator-console",
+      displayName: "Website Chat",
+      body: body.message,
+      repoHint: body.repo_hint
+    });
+
+    response.json({
+      success: true,
+      data: {
+        reply: result.reply,
+        task_id: result.taskId ?? null,
+        messages: result.messages
       }
     });
   } catch (error) {

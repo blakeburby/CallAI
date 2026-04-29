@@ -834,6 +834,119 @@ pre {
   display: none;
 }
 
+.tab-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  border: 1px solid rgba(171, 190, 198, 0.16);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(8, 12, 14, 0.78);
+  backdrop-filter: blur(16px);
+}
+
+.tab-button.active {
+  border-color: #66e0a3;
+  background: rgba(102, 224, 163, 0.18);
+  color: #e9fff7;
+}
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(320px, 0.42fr);
+  align-items: start;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.sms-health-layout {
+  display: grid;
+  grid-template-columns: minmax(420px, 0.8fr) minmax(420px, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.chat-panel {
+  min-height: 68vh;
+}
+
+.chat-thread {
+  display: grid;
+  align-content: end;
+  gap: 10px;
+  min-height: 46vh;
+  max-height: 58vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.chat-message {
+  display: grid;
+  gap: 7px;
+  width: min(82%, 760px);
+  border: 1px solid rgba(171, 190, 198, 0.16);
+  border-radius: 8px;
+  padding: 11px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-message.user {
+  justify-self: end;
+  border-color: rgba(78, 169, 255, 0.5);
+  background: rgba(78, 169, 255, 0.16);
+}
+
+.chat-message.assistant {
+  justify-self: start;
+}
+
+.chat-message p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #dce6ea;
+}
+
+.chat-message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-message-meta span {
+  color: #95a5ad;
+  font-size: 0.76rem;
+}
+
+.chat-task-card {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  min-height: 72px;
+  text-align: left;
+  background: rgba(102, 224, 163, 0.1);
+  border-color: rgba(102, 224, 163, 0.44);
+}
+
+.chat-task-card small {
+  color: #9fb0b8;
+  font-size: 0.75rem;
+}
+
+.chat-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chat-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 @media (max-width: 1320px) {
   .command-bar {
     grid-template-columns: 170px minmax(320px, 1fr) minmax(280px, 380px);
@@ -848,7 +961,9 @@ pre {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .mission-grid {
+  .mission-grid,
+  .chat-layout,
+  .sms-health-layout {
     grid-template-columns: minmax(300px, 0.8fr) minmax(420px, 1fr);
   }
 
@@ -901,6 +1016,9 @@ pre {
   .log-entry,
   .right-rail,
   .mission-grid,
+  .chat-layout,
+  .sms-health-layout,
+  .chat-form-row,
   .system-strip,
   .quick-strip {
     grid-template-columns: 1fr;

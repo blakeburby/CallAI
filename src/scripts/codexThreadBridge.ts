@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { auditLog } from "../modules/audit-log/auditLogService.js";
-import { smsNotifier } from "../modules/sms/smsNotifier.js";
+import { jarvisChatNotifier } from "../modules/jarvis-chat/jarvisChatNotifier.js";
 import { database } from "../services/dbService.js";
 
 type BridgeResult = Record<string, unknown>;
@@ -139,7 +139,7 @@ const finishTask = async (
     }
   });
 
-  await smsNotifier.taskFinished(result.task, status, summary);
+  await jarvisChatNotifier.taskFinished(result.task, status, summary);
 
   return {
     success: true,

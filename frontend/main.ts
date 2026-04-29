@@ -102,6 +102,24 @@ type TaskRecord = {
   updated_at: string;
 };
 
+type ChatMessage = {
+  id: string;
+  conversation_id: string;
+  task_id: string | null;
+  direction: "inbound" | "outbound" | "system";
+  role: "user" | "assistant" | "system";
+  body: string;
+  provider_message_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+  channel_kind: "web" | "sms" | "telegram";
+  channel_display_name: string;
+  task?: Pick<
+    TaskRecord,
+    "id" | "title" | "status" | "normalized_action" | "execution_target" | "updated_at"
+  >;
+};
+
 type AuditEvent = {
   id: string;
   event_type: string;
@@ -205,6 +223,15 @@ type TaskCreationData = {
   confirmation_id?: string;
 };
 
+type ChatMessagesData = {
+  messages: ChatMessage[];
+};
+
+type ChatMessageResult = ChatMessagesData & {
+  reply: string;
+  task_id: string | null;
+};
+
 type OutboundCallData = {
   call_id?: string;
   status: string;
@@ -256,6 +283,10 @@ const quickTasks: QuickTask[] = [
 ];
 
 const state: {
+  activeTab: "mission" | "chat" | "sms";
+  chatBusy: boolean;
+  chatDraft: string;
+  chatMessages: ChatMessage[];
   config: AppConfig | null;
   confirmations: Confirmation[];
   desktopState: DesktopState | null;
@@ -275,6 +306,10 @@ const state: {
   repoHint: string;
   vapi: VapiClient | null;
 } = {
+  activeTab: "mission",
+  chatBusy: false,
+  chatDraft: "",
+  chatMessages: [],
   config: null,
   confirmations: [],
   desktopState: null,
@@ -551,6 +586,10 @@ const logout = async (): Promise<void> => {
   }
 
   await request<never>("/frontend/logout", { method: "POST" }).catch(() => {});
+  state.activeTab = "mission";
+  state.chatBusy = false;
+  state.chatDraft = "";
+  state.chatMessages = [];
   state.config = null;
   state.confirmations = [];
   state.desktopState = null;
@@ -623,13 +662,15 @@ const refreshOperatorData = async (): Promise<void> => {
   }
 
   try {
-    const [overview, smsHealth, data] = await Promise.all([
+    const [overview, smsHealth, data, chat] = await Promise.all([
       request<OverviewData>("/operator/overview"),
       request<SmsHealthData>("/operator/sms/health"),
-      request<TaskListData>("/operator/tasks")
+      request<TaskListData>("/operator/tasks"),
+      request<ChatMessagesData>("/operator/chat/messages")
     ]);
     state.overview = overview;
     state.smsHealth = smsHealth;
+    state.chatMessages = chat.messages;
     state.tasks = overview.tasks.length ? overview.tasks : data.tasks;
     state.confirmations = overview.confirmations.length
       ? overview.confirmations
@@ -710,6 +751,57 @@ const createTask = async (
   } catch (error) {
     state.error = getErrorMessage(error);
     addLog("Task creation failed", state.error, "error");
+    render();
+  }
+};
+
+const submitChat = async (event: SubmitEvent): Promise<void> => {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const message = String(new FormData(form).get("message") ?? "").trim();
+
+  if (!message || state.chatBusy) {
+    return;
+  }
+
+  const optimistic: ChatMessage = {
+    id: `local-${Date.now()}`,
+    conversation_id: "local",
+    task_id: null,
+    direction: "inbound",
+    role: "user",
+    body: message,
+    provider_message_id: null,
+    payload: {},
+    created_at: new Date().toISOString(),
+    channel_kind: "web",
+    channel_display_name: "Website Chat"
+  };
+
+  try {
+    state.chatBusy = true;
+    state.chatDraft = "";
+    state.chatMessages = [...state.chatMessages, optimistic];
+    form.reset();
+    render();
+
+    const data = await request<ChatMessageResult>("/operator/chat/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        message,
+        ...(state.repoHint ? { repo_hint: state.repoHint } : {})
+      })
+    });
+    state.chatMessages = data.messages;
+    if (data.task_id) {
+      state.selectedTaskId = data.task_id;
+    }
+    await refreshOperatorData();
+  } catch (error) {
+    state.error = getErrorMessage(error);
+    addLog("Chat message failed", state.error, "error");
+  } finally {
+    state.chatBusy = false;
     render();
   }
 };
@@ -901,6 +993,30 @@ const renderDashboard = (): string => `
 
     ${state.error ? `<div class="notice error-text">${escapeHtml(state.error)}</div>` : ""}
 
+    <nav class="tab-strip" aria-label="Jarvis dashboard tabs">
+      ${renderTabButton("mission", "Mission Control")}
+      ${renderTabButton("chat", "Chat")}
+      ${renderTabButton("sms", "SMS/Health")}
+    </nav>
+
+    ${
+      state.activeTab === "chat"
+        ? renderChatTab()
+        : state.activeTab === "sms"
+          ? renderSmsHealthTab()
+          : renderMissionTab()
+    }
+  </main>
+`;
+
+const renderTabButton = (
+  tab: typeof state.activeTab,
+  label: string
+): string => `
+  <button class="tab-button ${state.activeTab === tab ? "active" : ""}" data-tab="${tab}" type="button">${escapeHtml(label)}</button>
+`;
+
+const renderMissionTab = (): string => `
     <section class="quick-strip" aria-label="Quick tasks">
       ${quickTasks
         .map(
@@ -982,7 +1098,73 @@ const renderDashboard = (): string => `
       <button data-task-control="cancel" ${!state.selectedTaskId || state.taskDetail?.task.status === "cancelled" || state.taskDetail?.task.status === "succeeded" ? "disabled" : ""}>Cancel</button>
       ${renderMobileApprovalButtons()}
     </nav>
-  </main>
+`;
+
+const renderChatTab = (): string => `
+  <section class="chat-layout">
+    <section class="panel chat-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="section-label">Jarvis Chat</p>
+          <h2>Shared agent thread</h2>
+        </div>
+        <span>${state.chatMessages.length} messages</span>
+      </div>
+      <div class="chat-thread" aria-live="polite">
+        ${
+          state.chatMessages.length
+            ? state.chatMessages.map(renderChatMessage).join("")
+            : '<p class="empty">Send Jarvis a task, ask for status, or say hello.</p>'
+        }
+      </div>
+      <form id="chat-form" class="chat-form">
+        <textarea name="message" rows="3" placeholder="Ask Jarvis to check status, inspect a repo, edit safely, browse Chrome, or continue a task.">${escapeHtml(state.chatDraft)}</textarea>
+        <div class="chat-form-row">
+          <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Chrome" />
+          <button class="primary" type="submit" ${state.chatBusy ? "disabled" : ""}>Send</button>
+        </div>
+      </form>
+    </section>
+    <aside class="right-rail">
+      <section class="panel approvals-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">Human Gate</p>
+            <h2>Approvals</h2>
+          </div>
+          <span>${state.confirmations.length} pending</span>
+        </div>
+        <div class="approval-list">
+          ${
+            state.confirmations.length
+              ? state.confirmations.map(renderConfirmation).join("")
+              : '<p class="empty">No pending approvals.</p>'
+          }
+        </div>
+      </section>
+      <section class="panel detail-panel">
+        ${renderTaskDetail()}
+      </section>
+    </aside>
+  </section>
+`;
+
+const renderSmsHealthTab = (): string => `
+  <section class="sms-health-layout">
+    <section class="panel sms-panel">
+      ${renderSmsPanel()}
+    </section>
+    <section class="panel event-panel">
+      <div class="log-heading">
+        <div>
+          <p class="section-label">Shared Activity</p>
+          <h2>Recent Jarvis events</h2>
+        </div>
+        <button id="clear-log">Clear</button>
+      </div>
+      ${renderEventStream()}
+    </section>
+  </section>
 `;
 
 type UiTone = "ok" | "warn" | "danger" | "idle" | "active";
@@ -1101,6 +1283,30 @@ const renderTaskGroups = (): string => {
     )
     .join("");
 };
+
+const renderChatMessage = (message: ChatMessage): string => {
+  const own = message.role === "user";
+  const channel = message.channel_kind === "web" ? "Website" : formatLabel(message.channel_kind);
+
+  return `
+    <article class="chat-message ${own ? "user" : "assistant"}">
+      <div class="chat-message-meta">
+        <strong>${own ? "You" : "Jarvis"}</strong>
+        <span>${escapeHtml(channel)} · ${escapeHtml(formatTime(message.created_at))}</span>
+      </div>
+      <p>${escapeHtml(message.body)}</p>
+      ${message.task ? renderChatTaskCard(message.task) : ""}
+    </article>
+  `;
+};
+
+const renderChatTaskCard = (task: NonNullable<ChatMessage["task"]>): string => `
+  <button class="chat-task-card" data-task-id="${escapeHtml(task.id)}" type="button">
+    <span class="badge ${escapeHtml(task.status)}">${escapeHtml(formatLabel(task.status))}</span>
+    <strong>${escapeHtml(task.title)}</strong>
+    <small>${escapeHtml(formatLabel(task.normalized_action))} · ${escapeHtml(formatLabel(task.execution_target))}</small>
+  </button>
+`;
 
 const renderTaskRow = (task: TaskRecord): string => {
   const active = state.selectedTaskId === task.id ? "active" : "";
@@ -1480,6 +1686,7 @@ const renderLogEntry = (entry: LogEntry): string => `
 const bindEvents = (): void => {
   document.querySelector<HTMLFormElement>("#login-form")?.addEventListener("submit", login);
   document.querySelector<HTMLFormElement>("#task-form")?.addEventListener("submit", submitTask);
+  document.querySelector<HTMLFormElement>("#chat-form")?.addEventListener("submit", submitChat);
   document.querySelector<HTMLFormElement>("#outbound-form")?.addEventListener("submit", startOutboundCall);
   document.querySelector<HTMLButtonElement>("#start-call")?.addEventListener("click", startCall);
   document.querySelector<HTMLButtonElement>("#end-call")?.addEventListener("click", endCall);
@@ -1510,8 +1717,23 @@ const bindEvents = (): void => {
     ?.addEventListener("input", (event) => {
       state.repoHint = (event.currentTarget as HTMLInputElement).value;
     });
+  document
+    .querySelector<HTMLTextAreaElement>('#chat-form textarea[name="message"]')
+    ?.addEventListener("input", (event) => {
+      state.chatDraft = (event.currentTarget as HTMLTextAreaElement).value;
+    });
 
-  document.querySelectorAll<HTMLButtonElement>(".task-row").forEach((button) => {
+  document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.tab;
+      if (tab === "mission" || tab === "chat" || tab === "sms") {
+        state.activeTab = tab;
+        render();
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>(".task-row,.chat-task-card").forEach((button) => {
     button.addEventListener("click", () => {
       const taskId = button.dataset.taskId;
       if (taskId) {

@@ -3,6 +3,13 @@ import type { Pool as PgPool, PoolClient, QueryResultRow } from "pg";
 import type {
   AuditEventRecord,
   ChatChannelRecord,
+  ChatChannelKind,
+  ChatConversationRecord,
+  ChatMessageDirection,
+  ChatMessageRecord,
+  ChatMessageRole,
+  ChatMessageTaskLinkRecord,
+  ChatTaskOriginRecord,
   CodexThreadJobRecord,
   ConfirmationRequestRecord,
   DesktopSnapshotRecord,
@@ -93,9 +100,36 @@ type SmsMessageInput = {
   payload?: JsonRecord;
 };
 
+type ChatChannelInput = {
+  kind: ChatChannelKind;
+  external_id: string;
+  display_name: string;
+  repo_id?: string | null;
+};
+
+type ChatConversationInput = {
+  channel_id: string;
+  scope?: string;
+  status?: string;
+  title?: string;
+};
+
+type ChatMessageInput = {
+  conversation_id: string;
+  task_id?: string | null;
+  direction: ChatMessageDirection;
+  role: ChatMessageRole;
+  body: string;
+  provider_message_id?: string | null;
+  payload?: JsonRecord;
+};
+
 type InMemoryStore = {
   auditEvents: AuditEventRecord[];
   chatChannels: ChatChannelRecord[];
+  chatConversations: ChatConversationRecord[];
+  chatMessageTasks: ChatMessageTaskLinkRecord[];
+  chatMessages: ChatMessageRecord[];
   codexThreadJobs: CodexThreadJobRecord[];
   confirmations: ConfirmationRequestRecord[];
   desktopSnapshots: DesktopSnapshotRecord[];
@@ -129,6 +163,9 @@ export const db = createPostgresPool();
 const memoryStore: InMemoryStore = {
   auditEvents: [],
   chatChannels: [],
+  chatConversations: [],
+  chatMessageTasks: [],
+  chatMessages: [],
   codexThreadJobs: [],
   confirmations: [],
   desktopSnapshots: [],
@@ -272,6 +309,334 @@ export const database = {
       occurred_at: now(),
       ...input
     });
+  },
+
+  async upsertChatChannel(
+    input: ChatChannelInput
+  ): Promise<ChatChannelRecord> {
+    if (db) {
+      return queryRequired<ChatChannelRecord>(
+        `insert into chat_channels (kind, external_id, display_name, repo_id)
+         values ($1, $2, $3, $4)
+         on conflict (kind, external_id) do update
+           set display_name = excluded.display_name,
+               repo_id = coalesce(excluded.repo_id, chat_channels.repo_id)
+         returning *`,
+        [
+          input.kind,
+          input.external_id,
+          input.display_name,
+          input.repo_id ?? null
+        ],
+        "upsert chat channel"
+      );
+    }
+
+    const existing = memoryStore.chatChannels.find(
+      (channel) =>
+        channel.kind === input.kind && channel.external_id === input.external_id
+    );
+
+    if (existing) {
+      existing.display_name = input.display_name;
+      existing.repo_id = input.repo_id ?? existing.repo_id;
+      return existing;
+    }
+
+    const channel: ChatChannelRecord = {
+      id: randomUUID(),
+      kind: input.kind,
+      external_id: input.external_id,
+      display_name: input.display_name,
+      repo_id: input.repo_id ?? null
+    };
+    memoryStore.chatChannels.unshift(channel);
+    return channel;
+  },
+
+  async getChatChannel(channelId: string): Promise<ChatChannelRecord | null> {
+    if (db) {
+      return queryOne<ChatChannelRecord>(
+        `select * from chat_channels where id = $1 limit 1`,
+        [channelId],
+        "get chat channel"
+      );
+    }
+
+    return memoryStore.chatChannels.find((channel) => channel.id === channelId) ?? null;
+  },
+
+  async upsertChatConversation(
+    input: ChatConversationInput
+  ): Promise<ChatConversationRecord> {
+    const scope = input.scope ?? "jarvis";
+    const status = input.status ?? null;
+    const title = input.title ?? "Jarvis";
+
+    if (db) {
+      return queryRequired<ChatConversationRecord>(
+        `insert into chat_conversations (
+           channel_id, scope, status, title, last_message_at
+         )
+         values ($1, $2, coalesce($3, 'active'), $4, now())
+         on conflict (channel_id, scope) do update
+           set status = coalesce($3, chat_conversations.status),
+               title = excluded.title,
+               last_message_at = now(),
+               updated_at = now()
+         returning *`,
+        [input.channel_id, scope, status, title],
+        "upsert chat conversation"
+      );
+    }
+
+    const existing = memoryStore.chatConversations.find(
+      (conversation) =>
+        conversation.channel_id === input.channel_id && conversation.scope === scope
+    );
+
+    if (existing) {
+      existing.status = status ?? existing.status;
+      existing.title = title;
+      existing.last_message_at = now();
+      existing.updated_at = now();
+      return existing;
+    }
+
+    const timestamp = now();
+    const conversation: ChatConversationRecord = {
+      id: randomUUID(),
+      channel_id: input.channel_id,
+      scope,
+      status: status ?? "active",
+      title,
+      last_message_at: timestamp,
+      created_at: timestamp,
+      updated_at: timestamp
+    };
+    memoryStore.chatConversations.unshift(conversation);
+    return conversation;
+  },
+
+  async getChatConversation(
+    conversationId: string
+  ): Promise<ChatConversationRecord | null> {
+    if (db) {
+      return queryOne<ChatConversationRecord>(
+        `select * from chat_conversations where id = $1 limit 1`,
+        [conversationId],
+        "get chat conversation"
+      );
+    }
+
+    return (
+      memoryStore.chatConversations.find(
+        (conversation) => conversation.id === conversationId
+      ) ?? null
+    );
+  },
+
+  async appendChatMessage(input: ChatMessageInput): Promise<ChatMessageRecord> {
+    if (db) {
+      const client = await db.connect();
+
+      try {
+        await client.query("begin");
+        const message = await queryRequired<ChatMessageRecord>(
+          `insert into chat_messages (
+             conversation_id, task_id, direction, role, body,
+             provider_message_id, payload
+           )
+           values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+           returning *`,
+          [
+            input.conversation_id,
+            input.task_id ?? null,
+            input.direction,
+            input.role,
+            input.body,
+            input.provider_message_id ?? null,
+            JSON.stringify(input.payload ?? {})
+          ],
+          "append chat message",
+          client
+        );
+        await client.query(
+          `update chat_conversations
+           set last_message_at = now(), updated_at = now()
+           where id = $1`,
+          [input.conversation_id]
+        );
+        await client.query("commit");
+        return message;
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    const message: ChatMessageRecord = {
+      id: randomUUID(),
+      conversation_id: input.conversation_id,
+      task_id: input.task_id ?? null,
+      direction: input.direction,
+      role: input.role,
+      body: input.body,
+      provider_message_id: input.provider_message_id ?? null,
+      payload: input.payload ?? {},
+      created_at: now()
+    };
+    memoryStore.chatMessages.unshift(message);
+    const conversation = memoryStore.chatConversations.find(
+      (item) => item.id === input.conversation_id
+    );
+    if (conversation) {
+      conversation.last_message_at = message.created_at;
+      conversation.updated_at = message.created_at;
+    }
+    return message;
+  },
+
+  async getChatMessage(messageId: string): Promise<ChatMessageRecord | null> {
+    if (db) {
+      return queryOne<ChatMessageRecord>(
+        `select * from chat_messages where id = $1 limit 1`,
+        [messageId],
+        "get chat message"
+      );
+    }
+
+    return memoryStore.chatMessages.find((message) => message.id === messageId) ?? null;
+  },
+
+  async listChatMessages(input: {
+    conversation_id?: string;
+    limit?: number;
+  } = {}): Promise<ChatMessageRecord[]> {
+    const limit = input.limit ?? 60;
+
+    if (db) {
+      const rows = await queryMany<ChatMessageRecord>(
+        input.conversation_id
+          ? `select * from chat_messages
+             where conversation_id = $1
+             order by created_at desc
+             limit $2`
+          : `select * from chat_messages
+             order by created_at desc
+             limit $1`,
+        input.conversation_id ? [input.conversation_id, limit] : [limit],
+        "list chat messages"
+      );
+
+      return rows.reverse();
+    }
+
+    return memoryStore.chatMessages
+      .filter((message) =>
+        input.conversation_id
+          ? message.conversation_id === input.conversation_id
+          : true
+      )
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(-limit);
+  },
+
+  async linkChatMessageTask(input: {
+    message_id: string;
+    task_id: string;
+    relation?: string;
+  }): Promise<ChatMessageTaskLinkRecord> {
+    const relation = input.relation ?? "related";
+
+    if (db) {
+      return queryRequired<ChatMessageTaskLinkRecord>(
+        `insert into chat_message_tasks (message_id, task_id, relation)
+         values ($1, $2, $3)
+         on conflict (message_id, task_id, relation) do update
+           set relation = excluded.relation
+         returning *`,
+        [input.message_id, input.task_id, relation],
+        "link chat message task"
+      );
+    }
+
+    const existing = memoryStore.chatMessageTasks.find(
+      (link) =>
+        link.message_id === input.message_id &&
+        link.task_id === input.task_id &&
+        link.relation === relation
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    const link: ChatMessageTaskLinkRecord = {
+      message_id: input.message_id,
+      task_id: input.task_id,
+      relation,
+      created_at: now()
+    };
+    memoryStore.chatMessageTasks.unshift(link);
+    return link;
+  },
+
+  async listChatTaskOrigins(taskId: string): Promise<ChatTaskOriginRecord[]> {
+    if (db) {
+      return queryMany<ChatTaskOriginRecord>(
+        `select distinct
+           chat_conversations.id as conversation_id,
+           chat_channels.kind as channel_kind,
+           chat_channels.external_id,
+           chat_channels.display_name
+         from chat_message_tasks
+         join chat_messages on chat_messages.id = chat_message_tasks.message_id
+         join chat_conversations on chat_conversations.id = chat_messages.conversation_id
+         join chat_channels on chat_channels.id = chat_conversations.channel_id
+         where chat_message_tasks.task_id = $1
+         order by chat_conversations.id asc`,
+        [taskId],
+        "list chat task origins"
+      );
+    }
+
+    const seen = new Set<string>();
+    const origins: ChatTaskOriginRecord[] = [];
+
+    for (const link of memoryStore.chatMessageTasks) {
+      if (link.task_id !== taskId) {
+        continue;
+      }
+
+      const message = memoryStore.chatMessages.find(
+        (item) => item.id === link.message_id
+      );
+      const conversation = message
+        ? memoryStore.chatConversations.find(
+            (item) => item.id === message.conversation_id
+          )
+        : null;
+      const channel = conversation
+        ? memoryStore.chatChannels.find((item) => item.id === conversation.channel_id)
+        : null;
+
+      if (!conversation || !channel || seen.has(conversation.id)) {
+        continue;
+      }
+
+      seen.add(conversation.id);
+      origins.push({
+        conversation_id: conversation.id,
+        channel_kind: channel.kind,
+        external_id: channel.external_id,
+        display_name: channel.display_name
+      });
+    }
+
+    return origins;
   },
 
   async upsertSmsConversation(

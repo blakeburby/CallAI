@@ -3,7 +3,7 @@ import { codexBridge } from "../codex-bridge/codexBridge.js";
 import { contextMemory } from "../context-memory/contextMemoryService.js";
 import { chatConnector } from "../chat-connector/chatConnector.js";
 import { desktopController } from "../desktop-controller/desktopController.js";
-import { smsNotifier } from "../sms/smsNotifier.js";
+import { jarvisChatNotifier } from "../jarvis-chat/jarvisChatNotifier.js";
 import { database } from "../../services/dbService.js";
 import type {
   DeveloperTask,
@@ -75,7 +75,7 @@ export const executionEngine = {
       });
 
       if (result.notifyCompletion !== false) {
-        void smsNotifier.taskFinished(task, "succeeded", result.summary);
+        void jarvisChatNotifier.taskFinished(task, "succeeded", result.summary);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -98,7 +98,7 @@ export const executionEngine = {
         severity: "error",
         payload: { error: message }
       });
-      void smsNotifier.taskFinished(task, "failed", message);
+      void jarvisChatNotifier.taskFinished(task, "failed", message);
     }
   },
 
@@ -572,7 +572,7 @@ const requestPublicationApproval = async (
     }
   });
 
-  void smsNotifier.taskNeedsConfirmation(updatedTask, confirmation);
+  void jarvisChatNotifier.taskNeedsConfirmation(updatedTask, confirmation);
 };
 
 const requestDesktopControlApproval = async (
@@ -606,7 +606,7 @@ const requestDesktopControlApproval = async (
     }
   });
 
-  void smsNotifier.taskNeedsConfirmation(updatedTask, confirmation);
+  void jarvisChatNotifier.taskNeedsConfirmation(updatedTask, confirmation);
 };
 
 const blockTask = async (
@@ -627,7 +627,7 @@ const blockTask = async (
     severity: "warn",
     payload: { reason }
   });
-  void smsNotifier.taskFinished(task, "blocked", reason);
+  void jarvisChatNotifier.taskFinished(task, "blocked", reason);
 };
 
 const buildCodexPrompt = (task: DeveloperTask, branchName: string): string => {

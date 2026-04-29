@@ -42,6 +42,9 @@ export const executorKinds = [
 
 export const runnerTaskScopes = ["all", "read_only", "write"] as const;
 export const taskExecutionTargets = ["runner", "codex_thread"] as const;
+export const chatChannelKinds = ["web", "sms", "telegram"] as const;
+export const chatMessageDirections = ["inbound", "outbound", "system"] as const;
+export const chatMessageRoles = ["user", "assistant", "system"] as const;
 
 export type NormalizedAction = (typeof normalizedActions)[number];
 export type PermissionLevel = (typeof permissionLevels)[number];
@@ -49,6 +52,9 @@ export type TaskStatus = (typeof taskStatuses)[number];
 export type ExecutorKind = (typeof executorKinds)[number];
 export type RunnerTaskScope = (typeof runnerTaskScopes)[number];
 export type TaskExecutionTarget = (typeof taskExecutionTargets)[number];
+export type ChatChannelKind = (typeof chatChannelKinds)[number];
+export type ChatMessageDirection = (typeof chatMessageDirections)[number];
+export type ChatMessageRole = (typeof chatMessageRoles)[number];
 
 export type DeveloperTask = {
   action: NormalizedAction;
@@ -262,10 +268,56 @@ export type MemoryRecord = {
 
 export type ChatChannelRecord = {
   id: string;
-  kind: string;
+  kind: ChatChannelKind;
   external_id: string;
   display_name: string;
   repo_id: string | null;
+};
+
+export type ChatConversationRecord = {
+  id: string;
+  channel_id: string;
+  scope: string;
+  status: string;
+  title: string;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChatMessageRecord = {
+  id: string;
+  conversation_id: string;
+  task_id: string | null;
+  direction: ChatMessageDirection;
+  role: ChatMessageRole;
+  body: string;
+  provider_message_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ChatMessageTaskLinkRecord = {
+  message_id: string;
+  task_id: string;
+  relation: string;
+  created_at: string;
+};
+
+export type ChatTaskOriginRecord = {
+  conversation_id: string;
+  channel_kind: ChatChannelKind;
+  external_id: string;
+  display_name: string;
+};
+
+export type JarvisChatMessageView = ChatMessageRecord & {
+  channel_kind: ChatChannelKind;
+  channel_display_name: string;
+  task?: Pick<
+    DeveloperTaskRecord,
+    "id" | "title" | "status" | "normalized_action" | "execution_target" | "updated_at"
+  >;
 };
 
 export type CreateTaskInput = {
@@ -273,7 +325,7 @@ export type CreateTaskInput = {
   sessionId?: string;
   repoHint?: string;
   userId?: string;
-  source?: "console" | "sms" | "tool" | "voice";
+  source?: "console" | "sms" | "telegram" | "web_chat" | "tool" | "voice";
 };
 
 export type TaskCreationResult = {

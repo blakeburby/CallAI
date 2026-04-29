@@ -12,6 +12,10 @@ test("frontend boots through public bootstrap and has a fatal fallback", async (
   assert.match(source, /Startup Error/);
   assert.match(source, /window\.addEventListener\("unhandledrejection"/);
   assert.match(source, /render\(\);\s+void loadConfig\(\);/);
+  assert.match(source, /\/operator\/chat\/messages/);
+  assert.match(source, /Mission Control/);
+  assert.match(source, /SMS\/Health/);
+  assert.match(source, /Shared agent thread/);
   assert.match(html, /<div id="app">[\s\S]+Jarvis Dashboard/);
   assert.match(html, /JavaScript is required to unlock the dashboard/);
 });
