@@ -11,6 +11,14 @@ import { smsService } from "../modules/sms/smsService.js";
 const ASSISTANT_ID = "fa6b7d3e-5fed-4137-acd9-87cef47e548a";
 const ASSISTANT_NAME = "CallAI Developer Operator";
 
+type FrontendConfig = {
+  assistantId: string;
+  assistantName: string;
+  backendUrl: string;
+  sms: ReturnType<typeof smsService.configSummary>;
+  vapiPublicKey: string;
+};
+
 export const frontendRouter = Router();
 
 frontendRouter.post("/frontend/login", (request, response) => {
@@ -43,6 +51,39 @@ frontendRouter.post("/frontend/logout", (_request, response) => {
   response.json({ success: true });
 });
 
+frontendRouter.get("/frontend/bootstrap", (request, response) => {
+  if (!isFrontendAuthenticated(request)) {
+    response.json({
+      success: true,
+      data: {
+        authenticated: false
+      }
+    });
+    return;
+  }
+
+  const publicKey = process.env.VAPI_PUBLIC_KEY;
+
+  if (!publicKey) {
+    response.json({
+      success: true,
+      data: {
+        authenticated: true,
+        configError: "Vapi public key is not configured."
+      }
+    });
+    return;
+  }
+
+  response.json({
+    success: true,
+    data: {
+      authenticated: true,
+      ...getFrontendConfig(request, publicKey)
+    }
+  });
+});
+
 frontendRouter.get("/frontend/config", (request, response) => {
   if (!isFrontendAuthenticated(request)) {
     response.status(401).json({
@@ -64,14 +105,19 @@ frontendRouter.get("/frontend/config", (request, response) => {
 
   response.json({
     success: true,
-    data: {
-      assistantId: process.env.VAPI_ASSISTANT_ID || ASSISTANT_ID,
-      assistantName: process.env.VAPI_ASSISTANT_NAME || ASSISTANT_NAME,
-      backendUrl: getPublicOrigin(request),
-      sms: smsService.configSummary(),
-      vapiPublicKey: publicKey
-    }
+    data: getFrontendConfig(request, publicKey)
   });
+});
+
+const getFrontendConfig = (
+  request: Request,
+  publicKey: string
+): FrontendConfig => ({
+  assistantId: process.env.VAPI_ASSISTANT_ID || ASSISTANT_ID,
+  assistantName: process.env.VAPI_ASSISTANT_NAME || ASSISTANT_NAME,
+  backendUrl: getPublicOrigin(request),
+  sms: smsService.configSummary(),
+  vapiPublicKey: publicKey
 });
 
 const getPublicOrigin = (request: Request): string => {

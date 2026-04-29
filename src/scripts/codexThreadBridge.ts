@@ -20,10 +20,14 @@ const main = async (): Promise<void> => {
     return print(await finishTask("failed"));
   }
 
+  if (command === "heartbeat") {
+    return print(await heartbeatTask());
+  }
+
   print({
     success: false,
     error:
-      "Usage: codexThreadBridge.ts claim | complete <task_id> <summary> | fail <task_id> <reason>"
+      "Usage: codexThreadBridge.ts claim | complete <task_id> <summary> | fail <task_id> <reason> | heartbeat <task_id>"
   });
   process.exitCode = 1;
 };
@@ -61,9 +65,43 @@ const claimTask = async (): Promise<BridgeResult> => {
       "Execute this CallAI task in the current Codex project.",
       "Keep changes scoped to the interpreted task.",
       "Do not commit, push, open a PR, delete files, deploy, or change secrets unless the task already has explicit approval.",
-      "When finished, run npm run codex-thread:complete -- <task_id> <summary>.",
-      "If blocked or failed, run npm run codex-thread:fail -- <task_id> <reason>."
+      "For work that lasts more than a few minutes, run npm run codex-thread:heartbeat -- <task_id> periodically so the task is not recycled as stale.",
+      "When finished, run npm run codex-thread:complete -- <task_id> <concise summary>.",
+      "If blocked or failed, run npm run codex-thread:fail -- <task_id> <concise reason>."
     ]
+  };
+};
+
+const heartbeatTask = async (): Promise<BridgeResult> => {
+  const taskId = process.argv[3];
+
+  if (!taskId) {
+    process.exitCode = 1;
+    return {
+      success: false,
+      error: "Usage: codexThreadBridge.ts heartbeat <task_id>"
+    };
+  }
+
+  const result = await database.heartbeatCodexThreadTask({
+    task_id: taskId
+  });
+
+  await auditLog.log({
+    task_id: result.task.id,
+    run_id: result.run?.id ?? null,
+    event_type: "codex_thread.heartbeat",
+    payload: {
+      job_id: result.job?.id ?? null
+    }
+  });
+
+  return {
+    success: true,
+    task_id: result.task.id,
+    job_id: result.job?.id ?? null,
+    run_id: result.run?.id ?? null,
+    heartbeat_at: result.job?.heartbeat_at ?? result.run?.heartbeat_at ?? null
   };
 };
 

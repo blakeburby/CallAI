@@ -23,6 +23,7 @@ export const createPostgresPool = (): PgPool | null => {
       process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? 15000
     ),
     idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30000),
+    allowExitOnIdle: true,
     keepAlive: true,
     max: Number(process.env.DATABASE_POOL_MAX ?? 10),
     maxUses: Number(process.env.DATABASE_POOL_MAX_USES ?? 500),

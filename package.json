@@ -11,9 +11,12 @@
     "dev": "tsx watch src/server.ts",
     "frontend:dev": "vite --host 0.0.0.0",
     "frontend:build": "vite build",
+    "frontend:smoke": "node scripts/frontendSmoke.cjs",
     "backend:build": "tsup src/server.ts src/runner/agentRunner.ts src/runner/localBridge.ts --format esm",
     "build": "npm run frontend:build && npm run backend:build",
-    "db:migrate": "tsx src/scripts/migrateDatabase.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts",
+    "db:migrate": "node src/scripts/migrateDatabase.cjs",
     "db:seed": "tsx src/scripts/seedDatabase.ts",
     "start": "node dist/server.js",
     "runner": "node dist/runner/agentRunner.js",
@@ -22,7 +25,8 @@
     "local-bridge:dev": "tsx src/runner/localBridge.ts",
     "codex-thread:claim": "tsx src/scripts/codexThreadBridge.ts claim",
     "codex-thread:complete": "tsx src/scripts/codexThreadBridge.ts complete",
-    "codex-thread:fail": "tsx src/scripts/codexThreadBridge.ts fail"
+    "codex-thread:fail": "tsx src/scripts/codexThreadBridge.ts fail",
+    "codex-thread:heartbeat": "tsx src/scripts/codexThreadBridge.ts heartbeat"
   },
   "dependencies": {
     "@openai/codex": "^0.122.0",

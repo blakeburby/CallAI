@@ -11,6 +11,7 @@ import {
 } from "../services/dbService.js";
 import type {
   AuditEventRecord,
+  CodexThreadJobRecord,
   ConfirmationRequestRecord,
   DeveloperTaskRecord
 } from "../types/operator.js";
@@ -52,6 +53,13 @@ operatorRouter.get("/operator/overview", async (_request, response, next) => {
         checkDatabaseConnection(),
         smsService.getHealth()
       ]);
+    const codexThreadJobs = (
+      await Promise.all(
+        tasks
+          .filter((task) => task.execution_target === "codex_thread")
+          .map((task) => database.getCodexThreadJob(task.id))
+      )
+    ).filter((job): job is CodexThreadJobRecord => Boolean(job));
 
     response.json({
       success: true,
@@ -60,7 +68,7 @@ operatorRouter.get("/operator/overview", async (_request, response, next) => {
         confirmations,
         counts: buildTaskCounts(tasks, confirmations),
         runner: summarizeRunner(events, tasks),
-        codex_thread: summarizeCodexThread(events, tasks),
+        codex_thread: summarizeCodexThread(events, tasks, codexThreadJobs),
         sms: smsHealth.summary,
         database: databaseHealth,
         last_activity_at: latestActivityAt(tasks, confirmations, events)
@@ -265,7 +273,8 @@ function buildTaskCounts(
 
 function summarizeCodexThread(
   events: AuditEventRecord[],
-  tasks: DeveloperTaskRecord[]
+  tasks: DeveloperTaskRecord[],
+  jobs: CodexThreadJobRecord[]
 ): Record<string, unknown> {
   const bridgeEvent = events.find((event) =>
     event.event_type.startsWith("codex_thread.")
@@ -280,30 +289,39 @@ function summarizeCodexThread(
   const staleThresholdMs = Number(
     process.env.CODEX_THREAD_STALE_AFTER_MS ?? 15 * 60 * 1000
   );
+  const activeJob = running
+    ? jobs.find((job) => job.task_id === running.id) ?? null
+    : null;
   const oldestQueued = queued
     .map((task) => task.created_at)
     .sort()
     .at(0);
-  const stale =
+  const waitingStale =
     Boolean(oldestQueued) &&
     Date.now() - new Date(oldestQueued!).getTime() > staleThresholdMs;
+  const activeHeartbeatAt =
+    activeJob?.heartbeat_at ?? activeJob?.claimed_at ?? activeJob?.updated_at ?? null;
+  const activeStale =
+    Boolean(running && activeHeartbeatAt) &&
+    Date.now() - new Date(activeHeartbeatAt!).getTime() > staleThresholdMs;
+  const stale = waitingStale || activeStale;
 
   return {
     enabled: isEnabled(process.env.CODEX_THREAD_BRIDGE_ENABLED),
-    status: running
-      ? "claimed"
+    status: stale
+      ? "waiting_stale"
+      : running
+        ? "claimed"
       : queued.length
-        ? stale
-          ? "waiting_stale"
-          : "waiting"
-        : bridgeEvent
-          ? "seen"
-          : "idle",
+        ? "waiting"
+        : "idle",
     waiting_count: queued.length,
     active_task_id: running?.id ?? null,
     active_task_title: running?.title ?? null,
+    active_heartbeat_at: activeHeartbeatAt,
     oldest_waiting_at: oldestQueued ?? null,
     stale,
+    active_stale: activeStale,
     last_event_type: bridgeEvent?.event_type ?? null,
     last_seen_at: bridgeEvent?.created_at ?? null
   };

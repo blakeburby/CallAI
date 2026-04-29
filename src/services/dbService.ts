@@ -61,6 +61,7 @@ type ExecutionRunInput = {
   status?: TaskStatus;
   started_at?: string | null;
   finished_at?: string | null;
+  heartbeat_at?: string | null;
   final_summary?: string | null;
 };
 
@@ -522,9 +523,9 @@ export const database = {
     if (db) {
       return queryRequired<ExecutionRunRecord>(
         `insert into execution_runs (
-           task_id, executor, branch_name, status, started_at, finished_at, final_summary
+           task_id, executor, branch_name, status, started_at, finished_at, heartbeat_at, final_summary
          )
-         values ($1, $2, $3, $4, $5, $6, $7)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
          returning *`,
         [
           input.task_id,
@@ -533,6 +534,7 @@ export const database = {
           input.status ?? "queued",
           input.started_at ?? null,
           input.finished_at ?? null,
+          input.heartbeat_at ?? null,
           input.final_summary ?? null
         ],
         "create execution run"
@@ -547,6 +549,7 @@ export const database = {
       status: input.status ?? "queued",
       started_at: input.started_at ?? null,
       finished_at: input.finished_at ?? null,
+      heartbeat_at: input.heartbeat_at ?? null,
       final_summary: input.final_summary ?? null
     };
     memoryStore.executionRuns.unshift(run);
@@ -564,6 +567,7 @@ export const database = {
         status: patch.status,
         started_at: patch.started_at,
         finished_at: patch.finished_at,
+        heartbeat_at: patch.heartbeat_at,
         final_summary: patch.final_summary
       });
 
@@ -694,7 +698,7 @@ export const database = {
                heartbeat_at = null,
                updated_at = now()
            where status = 'running'
-             and heartbeat_at < now() - ($1 * interval '1 millisecond')
+             and coalesce(heartbeat_at, claimed_at, updated_at) < now() - ($1 * interval '1 millisecond')
            returning task_id`,
           [staleMs],
           "reset stale codex thread jobs",
@@ -755,8 +759,8 @@ export const database = {
         );
 
         const run = await queryRequired<ExecutionRunRecord>(
-          `insert into execution_runs (task_id, executor, status, started_at)
-           values ($1, 'codex_thread', 'running', now())
+          `insert into execution_runs (task_id, executor, status, started_at, heartbeat_at)
+           values ($1, 'codex_thread', 'running', now(), now())
            returning *`,
           [task.id],
           "create codex thread run",
@@ -778,8 +782,8 @@ export const database = {
     for (const staleJob of memoryStore.codexThreadJobs) {
       if (
         staleJob.status === "running" &&
-        staleJob.heartbeat_at !== null &&
-        staleJob.heartbeat_at < staleThreshold
+        (staleJob.heartbeat_at ?? staleJob.claimed_at ?? staleJob.updated_at) <
+          staleThreshold
       ) {
         staleJob.status = "queued";
         staleJob.claimed_at = null;
@@ -833,10 +837,99 @@ export const database = {
       task_id: task.id,
       executor: "codex_thread",
       status: "running",
-      started_at: now()
+      started_at: now(),
+      heartbeat_at: now()
     });
 
     return { task, run, job };
+  },
+
+  async heartbeatCodexThreadTask(input: {
+    task_id: string;
+  }): Promise<{
+    task: DeveloperTaskRecord;
+    job: CodexThreadJobRecord | null;
+    run: ExecutionRunRecord | null;
+  }> {
+    if (db) {
+      const client = await db.connect();
+
+      try {
+        await client.query("begin");
+        const task = await queryRequired<DeveloperTaskRecord>(
+          `select * from tasks
+           where id = $1 and execution_target = 'codex_thread'
+           limit 1`,
+          [input.task_id],
+          "heartbeat codex thread task lookup",
+          client
+        );
+        const job = await queryOne<CodexThreadJobRecord>(
+          `update codex_thread_jobs
+           set heartbeat_at = now(),
+               updated_at = now()
+           where task_id = $1 and status = 'running'
+           returning *`,
+          [input.task_id],
+          "heartbeat codex thread job",
+          client
+        );
+        const run = await queryOne<ExecutionRunRecord>(
+          `update execution_runs
+           set heartbeat_at = now()
+           where id = (
+             select id from execution_runs
+             where task_id = $1 and executor = 'codex_thread' and status = 'running'
+             order by started_at desc nulls last
+             limit 1
+           )
+           returning *`,
+          [input.task_id],
+          "heartbeat codex thread run",
+          client
+        );
+
+        await client.query("commit");
+        return { task, job, run };
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    const task = memoryStore.tasks.find((item) => item.id === input.task_id);
+
+    if (!task || task.execution_target !== "codex_thread") {
+      throw new Error(`Codex-thread task not found: ${input.task_id}`);
+    }
+
+    const job =
+      memoryStore.codexThreadJobs.find(
+        (item) => item.task_id === input.task_id && item.status === "running"
+      ) ?? null;
+
+    if (job) {
+      Object.assign(job, {
+        heartbeat_at: now(),
+        updated_at: now()
+      });
+    }
+
+    const run =
+      memoryStore.executionRuns.find(
+        (item) =>
+          item.task_id === input.task_id &&
+          item.executor === "codex_thread" &&
+          item.status === "running"
+      ) ?? null;
+
+    if (run) {
+      run.heartbeat_at = now();
+    }
+
+    return { task, job, run };
   },
 
   async finishCodexThreadTask(input: {
@@ -879,6 +972,7 @@ export const database = {
           `update execution_runs
            set status = $2,
                finished_at = now(),
+               heartbeat_at = now(),
                final_summary = $3
            where id = (
              select id from execution_runs
@@ -934,6 +1028,7 @@ export const database = {
       Object.assign(run, {
         status: input.status,
         finished_at: now(),
+        heartbeat_at: now(),
         final_summary: input.summary
       });
     }

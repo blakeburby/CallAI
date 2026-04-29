@@ -297,7 +297,7 @@ export const desktopController = {
         action: planned.action,
         label: planned.label,
         selector: planned.selector,
-        summary: actionResult.summary
+        summary: stringResult(actionResult.summary) ?? undefined
       });
 
       await auditLog.log({
@@ -1006,59 +1006,6 @@ const buildSubmitScript = (action: DesktopAction): string => {
   `);
 };
 
-const buildElementActionScript = (action: DesktopAction, body: string): string => {
-  return `
-(() => {
-  const selector = ${JSON.stringify(action.selector ?? "")};
-  const label = ${JSON.stringify(action.label ?? "")};
-  ${HELPER_SCRIPT}
-  const element = findElement(selector, label);
-  if (!element) {
-    return JSON.stringify({ ok: false, clicked: null, target: null, selected: null, submitted: null });
-  }
-  ${body}
-})()
-`;
-};
-
-const OBSERVE_SCRIPT = `
-(() => {
-  try {
-    ${HELPER_SCRIPT}
-    const elements = Array.from(document.querySelectorAll("a,button,input,textarea,select,[role='button'],[role='link'],[contenteditable='true']"))
-      .filter(isVisible)
-      .slice(0, 80)
-      .map((element) => ({
-        selector: cssPath(element),
-        tag: element.tagName.toLowerCase(),
-        type: element.getAttribute("type"),
-        role: element.getAttribute("role"),
-        text: cleanText(element.innerText || element.textContent || element.getAttribute("aria-label") || ""),
-        label: cleanText(labelFor(element)),
-        placeholder: element.getAttribute("placeholder"),
-        name: element.getAttribute("name"),
-        href: element.href || null,
-        visible: isVisible(element)
-      }));
-    const text = cleanText(document.body ? document.body.innerText || "" : "").slice(0, 5000);
-    return JSON.stringify({
-      title: document.title || null,
-      url: location.href || null,
-      text,
-      elements
-    });
-  } catch (error) {
-    return JSON.stringify({
-      title: document.title || null,
-      url: location.href || null,
-      text: document.body ? String(document.body.innerText || "").slice(0, 5000) : "",
-      elements: [],
-      observe_error: String(error && error.message ? error.message : error)
-    });
-  }
-})()
-`;
-
 const HELPER_SCRIPT = `
 function cleanText(value) {
   return String(value || "").replace(/\\s+/g, " ").trim().slice(0, 500);
@@ -1126,6 +1073,59 @@ function findElement(selector, label) {
     || candidates.find((element) => normalized(labelFor(element)).includes(wanted))
     || candidates.find((element) => wanted.includes(normalized(labelFor(element))));
 }
+`;
+
+const buildElementActionScript = (action: DesktopAction, body: string): string => {
+  return `
+(() => {
+  const selector = ${JSON.stringify(action.selector ?? "")};
+  const label = ${JSON.stringify(action.label ?? "")};
+  ${HELPER_SCRIPT}
+  const element = findElement(selector, label);
+  if (!element) {
+    return JSON.stringify({ ok: false, clicked: null, target: null, selected: null, submitted: null });
+  }
+  ${body}
+})()
+`;
+};
+
+const OBSERVE_SCRIPT = `
+(() => {
+  try {
+    ${HELPER_SCRIPT}
+    const elements = Array.from(document.querySelectorAll("a,button,input,textarea,select,[role='button'],[role='link'],[contenteditable='true']"))
+      .filter(isVisible)
+      .slice(0, 80)
+      .map((element) => ({
+        selector: cssPath(element),
+        tag: element.tagName.toLowerCase(),
+        type: element.getAttribute("type"),
+        role: element.getAttribute("role"),
+        text: cleanText(element.innerText || element.textContent || element.getAttribute("aria-label") || ""),
+        label: cleanText(labelFor(element)),
+        placeholder: element.getAttribute("placeholder"),
+        name: element.getAttribute("name"),
+        href: element.href || null,
+        visible: isVisible(element)
+      }));
+    const text = cleanText(document.body ? document.body.innerText || "" : "").slice(0, 5000);
+    return JSON.stringify({
+      title: document.title || null,
+      url: location.href || null,
+      text,
+      elements
+    });
+  } catch (error) {
+    return JSON.stringify({
+      title: document.title || null,
+      url: location.href || null,
+      text: document.body ? String(document.body.innerText || "").slice(0, 5000) : "",
+      elements: [],
+      observe_error: String(error && error.message ? error.message : error)
+    });
+  }
+})()
 `;
 
 const inferUrl = (instructions: string): string | null => {

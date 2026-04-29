@@ -9,6 +9,11 @@ type AppConfig = {
   vapiPublicKey: string;
 };
 
+type FrontendBootstrap = {
+  authenticated: boolean;
+  configError?: string;
+} & Partial<AppConfig>;
+
 type SmsConfigSnapshot = {
   enabled: boolean;
   ownerPhoneTail: string | null;
@@ -354,35 +359,95 @@ const request = async <T>(
 
 const loadConfig = async (): Promise<void> => {
   try {
-    const config = await request<AppConfig>("/frontend/config");
-    state.config = config;
-    state.error = "";
-    try {
-      await createVapiClient(config);
-    } catch (error) {
-      state.vapi = null;
-      state.error = getErrorMessage(error);
-      addLog("Browser voice unavailable", state.error, "warn");
+    const bootstrap = await request<FrontendBootstrap>("/frontend/bootstrap");
+
+    if (!bootstrap.authenticated) {
+      showLockedDashboard();
+      return;
     }
-    setStatus(
-      "ready",
-      state.vapi
-        ? "Dashboard online. Voice, SMS, and task control are available."
-        : "Dashboard online. SMS and task control are available; browser voice needs attention."
-    );
-    addLog("Dashboard ready", config.assistantName, "success");
-    await refreshOperatorData();
-    startPolling();
+
+    if (!isAppConfig(bootstrap)) {
+      throw new Error(
+        bootstrap.configError || "Frontend configuration is incomplete."
+      );
+    }
+
+    await activateConfig(bootstrap);
   } catch (error) {
     stopPolling();
-    state.config = null;
-    state.vapi = null;
-    state.status = "locked";
-    state.statusDetail = "Unlock the dashboard to control CallAI.";
-    state.error =
-      getErrorMessage(error) === "Login required." ? "" : getErrorMessage(error);
-    render();
+    renderFatalBootError(error);
   }
+};
+
+const activateConfig = async (config: AppConfig): Promise<void> => {
+  state.config = config;
+  state.error = "";
+  try {
+    await createVapiClient(config);
+  } catch (error) {
+    state.vapi = null;
+    state.error = getErrorMessage(error);
+    addLog("Browser voice unavailable", state.error, "warn");
+  }
+  setStatus(
+    "ready",
+    state.vapi
+      ? "Dashboard online. Voice, SMS, and task control are available."
+      : "Dashboard online. SMS and task control are available; browser voice needs attention."
+  );
+  addLog("Dashboard ready", config.assistantName, "success");
+  await refreshOperatorData();
+  startPolling();
+};
+
+const showLockedDashboard = (): void => {
+  stopPolling();
+  state.config = null;
+  state.vapi = null;
+  state.status = "locked";
+  state.statusDetail = "Unlock the dashboard to control CallAI.";
+  state.error = "";
+  render();
+};
+
+const isAppConfig = (value: FrontendBootstrap): value is FrontendBootstrap & AppConfig => {
+  return (
+    typeof value.assistantId === "string" &&
+    typeof value.assistantName === "string" &&
+    typeof value.backendUrl === "string" &&
+    typeof value.vapiPublicKey === "string" &&
+    Boolean(value.sms)
+  );
+};
+
+const renderFatalBootError = (error: unknown): void => {
+  state.config = null;
+  state.vapi = null;
+  state.status = "error";
+  state.statusDetail = "The dashboard could not finish starting.";
+  state.error = getErrorMessage(error);
+  app.innerHTML = `
+    <main class="lock-shell">
+      <section class="lock-copy" aria-label="CallAI dashboard startup error">
+        <p class="eyebrow">Startup Error</p>
+        <h1>Jarvis Dashboard</h1>
+        <p>The dashboard loaded, but startup did not finish. Reload the page, or show the login screen and try again.</p>
+      </section>
+      <section class="login-panel" aria-label="Startup recovery">
+        <p class="error-text">${escapeHtml(state.error || "Unknown startup error.")}</p>
+        <div class="login-row">
+          <button class="primary" id="reload-page" type="button">Reload</button>
+          <button id="show-login" type="button">Show Login</button>
+        </div>
+      </section>
+    </main>
+  `;
+  document
+    .querySelector<HTMLButtonElement>("#reload-page")
+    ?.addEventListener("click", () => window.location.reload());
+  document
+    .querySelector<HTMLButtonElement>("#show-login")
+    ?.addEventListener("click", showLockedDashboard);
 };
 
 const createVapiClient = async (config: AppConfig): Promise<void> => {
@@ -2028,5 +2093,17 @@ const escapeHtml = (value: string): string => {
     .replaceAll("'", "&#039;");
 };
 
-render();
-void loadConfig();
+const boot = (): void => {
+  render();
+  void loadConfig();
+};
+
+window.addEventListener("error", (event) => {
+  renderFatalBootError(event.error ?? event.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  renderFatalBootError(event.reason);
+});
+
+boot();

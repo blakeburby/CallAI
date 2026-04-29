@@ -200,6 +200,7 @@ export type ExecutionRunRecord = {
   status: TaskStatus;
   started_at: string | null;
   finished_at: string | null;
+  heartbeat_at: string | null;
   final_summary: string | null;
 };
 
