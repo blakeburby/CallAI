@@ -6,7 +6,25 @@
     <title>Jarvis Control | CallAI</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <main class="lock-shell">
+        <section class="lock-copy" aria-label="CallAI dashboard login">
+          <p class="eyebrow">CallAI Control</p>
+          <h1>Jarvis Dashboard</h1>
+          <p>Secure operator access for voice, SMS, local bridge execution, approvals, and repo work.</p>
+        </section>
+        <form class="login-panel" id="login-form">
+          <label for="passcode">Passcode</label>
+          <div class="login-row">
+            <input id="passcode" name="passcode" type="password" autocomplete="one-time-code" placeholder="Enter passcode" />
+            <button class="primary" type="submit">Unlock</button>
+          </div>
+          <noscript>
+            <p class="error-text">JavaScript is required to unlock the dashboard.</p>
+          </noscript>
+        </form>
+      </main>
+    </div>
     <script type="module" src="/frontend/main.ts"></script>
   </body>
 </html>
