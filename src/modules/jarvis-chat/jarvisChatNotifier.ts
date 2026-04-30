@@ -16,9 +16,23 @@ export const jarvisChatNotifier = {
     confirmation: ConfirmationRequestRecord
   ): Promise<void> {
     const body = `Approval needed: ${task.title}. Risk: ${confirmation.risk}. Reply approve ${confirmation.id.slice(-6)} or deny ${confirmation.id.slice(-6)}.`;
-    await notifyTaskOrigins(task, body, "confirmation_requested", () =>
-      smsNotifier.taskNeedsConfirmation(task, confirmation)
+    await notifyTaskOrigins(
+      task,
+      body,
+      "confirmation_requested",
+      () => smsNotifier.taskNeedsConfirmation(task, confirmation),
+      {
+        telegramReplyMarkup: telegramService.approvalReplyMarkup(confirmation.id)
+      }
     );
+  },
+
+  async taskProgress(
+    task: DeveloperTaskRecord,
+    body: string,
+    relation = "task_progress"
+  ): Promise<void> {
+    await notifyTaskOrigins(task, body, relation, async () => undefined);
   },
 
   async taskFinished(
@@ -39,7 +53,10 @@ const notifyTaskOrigins = async (
   task: DeveloperTaskRecord,
   body: string,
   relation: string,
-  fallback: () => Promise<void>
+  fallback: () => Promise<void>,
+  options: {
+    telegramReplyMarkup?: ReturnType<typeof telegramService.approvalReplyMarkup>;
+  } = {}
 ): Promise<void> => {
   const origins = await database.listChatTaskOrigins(task.id);
 
@@ -62,7 +79,11 @@ const notifyTaskOrigins = async (
       }
 
       if (origin.channel_kind === "telegram") {
-        await telegramService.sendMessage(origin.external_id, body);
+        await telegramService.sendMessage(origin.external_id, body, {
+          ...(options.telegramReplyMarkup
+            ? { replyMarkup: options.telegramReplyMarkup }
+            : {})
+        });
       }
     } catch (error) {
       await auditLog.log({

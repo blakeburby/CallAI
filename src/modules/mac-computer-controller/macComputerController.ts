@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { auditLog } from "../audit-log/auditLogService.js";
+import { jarvisChatNotifier } from "../jarvis-chat/jarvisChatNotifier.js";
 import { database } from "../../services/dbService.js";
 import type {
   DeveloperTask,
@@ -101,6 +102,11 @@ const runShellTask = async (
       command: redactComputerText(command)
     }
   });
+  void jarvisChatNotifier.taskProgress(
+    task,
+    `Running shell command in ${cwd}: ${redactComputerText(command)}`,
+    "computer_shell_started"
+  );
 
   const { stdout, stderr } = await execFileAsync("/bin/zsh", ["-lc", command], {
     cwd,
@@ -140,6 +146,11 @@ const runShellTask = async (
       stderr: redactedStderr
     }
   });
+  void jarvisChatNotifier.taskProgress(
+    task,
+    summary,
+    "computer_shell_completed"
+  );
 
   return {
     summary,
@@ -193,6 +204,11 @@ const runGuiTask = async (
       max_steps: envInt("COMPUTER_CONTROL_MAX_STEPS", DEFAULT_MAX_STEPS)
     }
   });
+  void jarvisChatNotifier.taskProgress(
+    task,
+    `Starting Mac control for ${structured.targetApp ?? "the front app"}: ${structured.title}.`,
+    "computer_session_started"
+  );
 
   const actions: string[] = [];
   const maxSteps = envInt("COMPUTER_CONTROL_MAX_STEPS", DEFAULT_MAX_STEPS);
@@ -203,6 +219,11 @@ const runGuiTask = async (
 
     await action();
     actions.push(label);
+    void jarvisChatNotifier.taskProgress(
+      task,
+      `Mac step: ${label}.`,
+      "computer_step_completed"
+    );
   };
   const folder = inferFolderPath(structured.instructions);
   const appName = normalizeAppName(structured.targetApp, structured.instructions);

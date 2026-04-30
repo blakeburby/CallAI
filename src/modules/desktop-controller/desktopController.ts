@@ -3,6 +3,7 @@ import { readFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { auditLog } from "../audit-log/auditLogService.js";
+import { jarvisChatNotifier } from "../jarvis-chat/jarvisChatNotifier.js";
 import { database } from "../../services/dbService.js";
 import type {
   DeveloperTask,
@@ -113,6 +114,11 @@ export const desktopController = {
         max_steps: maxSteps
       }
     });
+    void jarvisChatNotifier.taskProgress(
+      task,
+      `Starting Chrome control: ${structured.title}.`,
+      "desktop_session_started"
+    );
 
     await openChrome();
     await auditLog.log({
@@ -124,6 +130,11 @@ export const desktopController = {
         desktop_mode: "normal_chrome"
       }
     });
+    void jarvisChatNotifier.taskProgress(
+      task,
+      "Chrome is open. I am observing the page and planning the next browser step.",
+      "desktop_chrome_opened"
+    );
 
     const javascriptAvailable = await chromeJavascriptAvailable();
 
@@ -228,6 +239,11 @@ export const desktopController = {
             latest_action_label: `Approval needed: ${safety.reason}`
           }
         });
+        void jarvisChatNotifier.taskProgress(
+          task,
+          `Approval needed before the next Chrome step: ${safety.reason}`,
+          "desktop_confirmation_required"
+        );
         return {
           summary: safety.reason,
           currentUrl: observation.url,
@@ -267,6 +283,11 @@ export const desktopController = {
             latest_action_label: `Done: ${summary}`
           }
         });
+        void jarvisChatNotifier.taskProgress(
+          task,
+          `Chrome task completed: ${summary}`,
+          "desktop_action_completed"
+        );
         return {
           summary,
           currentUrl: observation.url,
@@ -314,6 +335,11 @@ export const desktopController = {
           latest_action_label: latestAction
         }
       });
+      void jarvisChatNotifier.taskProgress(
+        task,
+        `Chrome step ${step}: ${latestAction}.`,
+        "desktop_action_completed"
+      );
     }
 
     const finalObservation = await observeChrome();
@@ -425,6 +451,11 @@ const runChromeWithoutDom = async (
       latest_action_label: `Navigated to ${page.title || page.url || targetUrl}`
     }
   });
+  void jarvisChatNotifier.taskProgress(
+    task,
+    `Chrome navigation completed: ${page.title || page.url || targetUrl}.`,
+    "desktop_action_completed"
+  );
 
   return {
     summary: `Opened Chrome and navigated to ${page.title || page.url || targetUrl}.`,

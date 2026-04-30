@@ -16,6 +16,66 @@ telegramRouter.post("/telegram/webhook", async (request, response, next) => {
       return;
     }
 
+    const callback = telegramCallback(request.body);
+
+    if (callback) {
+      if (!telegramService.isOwnerUser(callback.fromId)) {
+        await auditLog.log({
+          event_type: "telegram.inbound_rejected",
+          severity: "warn",
+          payload: {
+            reason: "non_owner_callback",
+            from_id: String(callback.fromId ?? ""),
+            chat_id_tail: String(callback.chatId).slice(-6)
+          }
+        });
+        response.json({ success: true, accepted: false });
+        return;
+      }
+
+      const callbackMessage = callbackMessageText(callback.data);
+
+      if (!callbackMessage) {
+        await telegramService.answerCallbackQuery(
+          String(callback.callbackId),
+          "That Jarvis action is no longer available."
+        );
+        response.json({ success: true, accepted: true, ignored: true });
+        return;
+      }
+
+      const result = await jarvisChatService.handleMessage({
+        channelKind: "telegram",
+        externalId: String(callback.chatId),
+        displayName: callback.displayName,
+        body: callbackMessage,
+        providerMessageId: String(callback.callbackId),
+        payload: {
+          telegram_from_id: String(callback.fromId),
+          telegram_chat_type: callback.chatType,
+          telegram_callback_data: callback.data
+        }
+      });
+
+      await telegramService.answerCallbackQuery(
+        String(callback.callbackId),
+        result.reply
+      );
+      await telegramService.sendMessage(String(callback.chatId), result.reply, {
+        ...(result.confirmationId
+          ? { replyMarkup: telegramService.approvalReplyMarkup(result.confirmationId) }
+          : {})
+      });
+      response.json({
+        success: true,
+        accepted: true,
+        reply: result.reply,
+        task_id: result.taskId ?? null,
+        confirmation_id: result.confirmationId ?? null
+      });
+      return;
+    }
+
     const message = telegramMessage(request.body);
 
     if (!message?.text) {
@@ -49,10 +109,16 @@ telegramRouter.post("/telegram/webhook", async (request, response, next) => {
       }
     });
 
-    await telegramService.sendMessage(String(message.chatId), result.reply);
+    await telegramService.sendMessage(String(message.chatId), result.reply, {
+      ...(result.confirmationId
+        ? { replyMarkup: telegramService.approvalReplyMarkup(result.confirmationId) }
+        : {})
+    });
     response.json({
       success: true,
       accepted: true,
+      reply: result.reply,
+      confirmation_id: result.confirmationId ?? null,
       task_id: result.taskId ?? null
     });
   } catch (error) {
@@ -101,6 +167,59 @@ const telegramMessage = (
     messageId: (message?.message_id as string | number | null | undefined) ?? null,
     text
   };
+};
+
+const telegramCallback = (
+  payload: unknown
+): {
+  callbackId: string | number;
+  chatId: string | number;
+  chatType: string | null;
+  data: string;
+  displayName: string;
+  fromId: string | number | null;
+} | null => {
+  const record = payload as Record<string, unknown>;
+  const callback = record.callback_query as Record<string, unknown> | undefined;
+  const data = typeof callback?.data === "string" ? callback.data.trim() : "";
+  const from = callback?.from as Record<string, unknown> | undefined;
+  const message = callback?.message as Record<string, unknown> | undefined;
+  const chat = message?.chat as Record<string, unknown> | undefined;
+  const chatId = chat?.id;
+  const callbackId = callback?.id;
+
+  if ((!chatId && chatId !== 0) || (!callbackId && callbackId !== 0) || !data) {
+    return null;
+  }
+
+  const personName = [stringField(from?.first_name), stringField(from?.last_name)]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const displayName =
+    stringField(chat?.title) ||
+    personName ||
+    stringField(from?.username) ||
+    "Telegram";
+
+  return {
+    callbackId: callbackId as string | number,
+    chatId: chatId as string | number,
+    chatType: stringField(chat?.type) ?? null,
+    data,
+    displayName,
+    fromId: (from?.id as string | number | null | undefined) ?? null
+  };
+};
+
+const callbackMessageText = (data: string): string | null => {
+  const match = data.match(/^(approve|deny):([0-9a-f-]{6,80})$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  return `${match[1]?.toLowerCase()} ${match[2]?.slice(-6)}`;
 };
 
 const stringField = (value: unknown): string | undefined => {

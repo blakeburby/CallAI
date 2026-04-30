@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import { promisify } from "node:util";
 import { auditLog } from "../modules/audit-log/auditLogService.js";
 import { executionEngine } from "../modules/execution-engine/executionEngine.js";
+import { jarvisChatNotifier } from "../modules/jarvis-chat/jarvisChatNotifier.js";
 import {
   checkDatabaseConnection,
   database,
@@ -76,6 +77,11 @@ const main = async (): Promise<void> => {
           executor
         }
       });
+      void jarvisChatNotifier.taskProgress(
+        claimed.task,
+        `Started: ${claimed.task.title}. I claimed it on ${runnerId} and I'm working now.`,
+        "task_started"
+      );
 
       await executionEngine.runTask(claimed.task, run);
     } catch (error) {

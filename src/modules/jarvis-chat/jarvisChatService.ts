@@ -25,6 +25,7 @@ type HandleMessageResult = {
   conversation: ChatConversationRecord;
   intent: JarvisIntent["kind"];
   reply: string;
+  confirmationId?: string;
   taskId?: string;
   messages: JarvisChatMessageView[];
 };
@@ -173,6 +174,7 @@ export const jarvisChatService = {
       conversation,
       intent: dispatch.intent,
       reply: assistant.body,
+      ...(dispatch.confirmationId ? { confirmationId: dispatch.confirmationId } : {}),
       ...(dispatch.taskId ? { taskId: dispatch.taskId } : {}),
       messages: await jarvisChatService.listMessages()
     };
@@ -213,7 +215,12 @@ const routeMessage = async (input: {
   conversation: ChatConversationRecord;
   keyword: ChatKeyword | null;
   repoHint?: string;
-}): Promise<{ intent: JarvisIntent["kind"]; reply: string; taskId?: string }> => {
+}): Promise<{
+  confirmationId?: string;
+  intent: JarvisIntent["kind"];
+  reply: string;
+  taskId?: string;
+}> => {
   if (input.keyword) {
     await auditLog.log({
       event_type: "jarvis.keyword_handled",
@@ -277,7 +284,12 @@ const dispatchIntent = async (
   channelKind: ChatChannelKind,
   repoHint?: string,
   chatContext?: ChatReplyContext
-): Promise<{ intent: JarvisIntent["kind"]; reply: string; taskId?: string }> => {
+): Promise<{
+  confirmationId?: string;
+  intent: JarvisIntent["kind"];
+  reply: string;
+  taskId?: string;
+}> => {
   switch (intent.kind) {
     case "chat_reply":
       return chatReply(
@@ -322,7 +334,12 @@ const createTaskReply = async (
   utterance: string,
   repoHint: string | undefined,
   channelKind: ChatChannelKind
-): Promise<{ intent: "create_task"; reply: string; taskId: string }> => {
+): Promise<{
+  confirmationId?: string;
+  intent: "create_task";
+  reply: string;
+  taskId: string;
+}> => {
   const task = await taskService.createFromUtterance({
     utterance,
     repoHint,
@@ -349,6 +366,7 @@ const createTaskReply = async (
     const confirmationTail = task.confirmation_id.slice(-6);
     return {
       intent: "create_task",
+      confirmationId: task.confirmation_id,
       taskId: task.task_id,
       reply: `Approval needed: ${task.interpreted_task.title}. Reply approve ${confirmationTail} or deny ${confirmationTail}.`
     };
@@ -709,7 +727,7 @@ const heuristicIntent = (body: string): JarvisIntent => {
   return {
     kind: "chat_reply",
     reply:
-      "I'm here. Tell me what you want checked, changed, summarized, or ask for task status."
+      "I can do that through a task when you make it concrete. Try something like: open Finder and show Downloads, run ls on Desktop, inspect this repo, or check status."
   };
 };
 

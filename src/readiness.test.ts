@@ -16,6 +16,10 @@ const { app } = await import("./app.js");
 const { database } = await import("./services/dbService.js");
 const { smsChatService } = await import("./modules/sms/smsChatService.js");
 const { taskService } = await import("./modules/execution-engine/taskService.js");
+const { jarvisChatNotifier } = await import(
+  "./modules/jarvis-chat/jarvisChatNotifier.js"
+);
+const { telegramService } = await import("./modules/telegram/telegramService.js");
 const {
   classifyComputerInstructionRisk,
   classifyShellCommandRisk,
@@ -351,11 +355,10 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     });
     assert.equal(accepted.status, 200);
     const acceptedPayload = await accepted.json();
-    assert.deepEqual(acceptedPayload, {
-      success: true,
-      accepted: true,
-      task_id: null
-    });
+    assert.equal(acceptedPayload.success, true);
+    assert.equal(acceptedPayload.accepted, true);
+    assert.equal(acceptedPayload.task_id, null);
+    assert.match(acceptedPayload.reply, /Online|Jarvis/i);
     assert.equal(await taskCount(), beforeOwnerTasks);
 
     const control = await fetch(`${baseUrl}/telegram/webhook`, {
@@ -369,14 +372,43 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
       method: "POST"
     });
     assert.equal(control.status, 200);
-    assert.deepEqual(await control.json(), {
-      success: true,
-      accepted: true,
-      task_id: null
-    });
+    const controlPayload = await control.json();
+    assert.equal(controlPayload.success, true);
+    assert.equal(controlPayload.accepted, true);
+    assert.equal(controlPayload.task_id, null);
+    assert.match(controlPayload.reply, /Mac local bridge|safe shell/i);
     assert.equal(await taskCount(), beforeOwnerTasks);
 
-    const taskRequest = await fetch(`${baseUrl}/telegram/webhook`, {
+    const finderRequest = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(
+        telegramUpdate(12345, 67890, "open Finder and show my Downloads", 44)
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(finderRequest.status, 200);
+    const finderPayload = await finderRequest.json();
+    assert.equal(finderPayload.success, true);
+    assert.equal(finderPayload.accepted, true);
+    assert.ok(finderPayload.task_id);
+    assert.match(finderPayload.reply, /Queued/i);
+
+    const finderTask = await database.getTask(finderPayload.task_id);
+    assert.ok(finderTask);
+    assert.equal(finderTask.structured_request.action, "desktop_control");
+    assert.equal(finderTask.structured_request.desktopMode, "full_mac");
+    assert.equal(finderTask.structured_request.targetApp, "Finder");
+
+    await jarvisChatNotifier.taskProgress(
+      finderTask,
+      "Mac step: opened Downloads.",
+      "computer_step_completed"
+    );
+
+    const shellRequest = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(telegramUpdate(12345, 67890, "run ls on Desktop", 44)),
       headers: {
         "Content-Type": "application/json",
@@ -384,13 +416,105 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
       },
       method: "POST"
     });
-    assert.equal(taskRequest.status, 200);
-    const taskPayload = await taskRequest.json();
+    assert.equal(shellRequest.status, 200);
+    const taskPayload = await shellRequest.json();
     assert.equal(taskPayload.success, true);
     assert.equal(taskPayload.accepted, true);
     assert.ok(taskPayload.task_id);
 
-    const sharedMessages = await database.listChatMessages({ limit: 20 });
+    const riskyRequest = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(
+        telegramUpdate(12345, 67890, "Open Mail and send this email to the team", 45)
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(riskyRequest.status, 200);
+    const riskyPayload = await riskyRequest.json();
+    assert.equal(riskyPayload.success, true);
+    assert.equal(riskyPayload.accepted, true);
+    assert.ok(riskyPayload.task_id);
+    assert.ok(riskyPayload.confirmation_id);
+    assert.match(riskyPayload.reply, /Approval needed/i);
+
+    const markup = telegramService.approvalReplyMarkup(riskyPayload.confirmation_id);
+    assert.equal(
+      markup.inline_keyboard[0]?.[0]?.callback_data,
+      `approve:${riskyPayload.confirmation_id}`
+    );
+    assert.equal(
+      markup.inline_keyboard[0]?.[1]?.callback_data,
+      `deny:${riskyPayload.confirmation_id}`
+    );
+
+    const callback = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(
+        telegramCallbackUpdate(
+          12345,
+          67890,
+          `approve:${riskyPayload.confirmation_id}`,
+          "callback-approve-1"
+        )
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(callback.status, 200);
+    const callbackPayload = await callback.json();
+    assert.equal(callbackPayload.success, true);
+    assert.equal(callbackPayload.accepted, true);
+    assert.equal(callbackPayload.task_id, riskyPayload.task_id);
+    assert.match(callbackPayload.reply, /Approved/i);
+
+    const approvedTask = await database.getTask(riskyPayload.task_id);
+    assert.equal(approvedTask?.status, "queued");
+
+    const denyRequest = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(
+        telegramUpdate(12345, 67890, "Open Mail and send this email to support", 46)
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(denyRequest.status, 200);
+    const denyPayload = await denyRequest.json();
+    assert.ok(denyPayload.confirmation_id);
+
+    const denyCallback = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(
+        telegramCallbackUpdate(
+          12345,
+          67890,
+          `deny:${denyPayload.confirmation_id}`,
+          "callback-deny-1"
+        )
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(denyCallback.status, 200);
+    const denyCallbackPayload = await denyCallback.json();
+    assert.equal(denyCallbackPayload.success, true);
+    assert.equal(denyCallbackPayload.accepted, true);
+    assert.equal(denyCallbackPayload.task_id, denyPayload.task_id);
+    assert.match(denyCallbackPayload.reply, /Denied/i);
+
+    const deniedTask = await database.getTask(denyPayload.task_id);
+    assert.equal(deniedTask?.status, "cancelled");
+
+    const sharedMessages = await database.listChatMessages({ limit: 80 });
     assert.ok(
       sharedMessages.some(
         (message) => message.provider_message_id === "42" && message.body === "hello"
@@ -401,6 +525,13 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
         (message) =>
           message.role === "assistant" &&
           /Mac local bridge|local bridge|safe shell/i.test(message.body)
+      )
+    );
+    assert.ok(
+      sharedMessages.some(
+        (message) =>
+          message.task_id === finderPayload.task_id &&
+          message.body === "Mac step: opened Downloads."
       )
     );
   });
@@ -476,5 +607,33 @@ const telegramUpdate = (
     },
     date: 1770000000,
     text
+  }
+});
+
+const telegramCallbackUpdate = (
+  fromId: number,
+  chatId: number,
+  data: string,
+  callbackId = "callback-1"
+): Record<string, unknown> => ({
+  update_id: 2,
+  callback_query: {
+    id: callbackId,
+    from: {
+      id: fromId,
+      first_name: "Blake",
+      is_bot: false
+    },
+    message: {
+      message_id: 99,
+      chat: {
+        id: chatId,
+        first_name: "Blake",
+        type: "private"
+      },
+      date: 1770000000,
+      text: "Approval needed"
+    },
+    data
   }
 });
