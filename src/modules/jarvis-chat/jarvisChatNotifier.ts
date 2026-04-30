@@ -15,7 +15,7 @@ export const jarvisChatNotifier = {
     task: DeveloperTaskRecord,
     confirmation: ConfirmationRequestRecord
   ): Promise<void> {
-    const body = `Approval needed: ${task.title}. Risk: ${confirmation.risk}. Reply approve ${confirmation.id.slice(-6)} or deny ${confirmation.id.slice(-6)}.`;
+    const body = `Approval gate for task ${task.id.slice(-6)}: ${task.title}. Risk: ${confirmation.risk}. Reply approve ${confirmation.id.slice(-6)} or deny ${confirmation.id.slice(-6)}.`;
     await notifyTaskOrigins(
       task,
       body,
@@ -40,9 +40,8 @@ export const jarvisChatNotifier = {
     status: Extract<TaskStatus, "succeeded" | "failed" | "blocked">,
     summary: string
   ): Promise<void> {
-    const label =
-      status === "succeeded" ? "completed" : status === "blocked" ? "blocked" : "failed";
-    const body = `Jarvis ${label}: ${task.title}. ${summary}`;
+    const label = status === "succeeded" ? "Done" : status === "blocked" ? "Blocked" : "Failed";
+    const body = `${label} on task ${task.id.slice(-6)}: ${task.title}. ${summary}`;
     await notifyTaskOrigins(task, body, `task_${status}`, () =>
       smsNotifier.taskFinished(task, status, summary)
     );

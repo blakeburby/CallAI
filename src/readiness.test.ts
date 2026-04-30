@@ -225,8 +225,8 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
     const beforeCasualTasks = await taskCount();
     const casualChecks = [
       {
-        message: "hello",
-        pattern: /Jarvis|task queue/i
+        message: "hello bruh",
+        pattern: /Jarvis|task|cockpit/i
       },
       {
         message: "what's your name",
@@ -234,7 +234,11 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
       },
       {
         message: "can you control my computer?",
-        pattern: /Mac local bridge|local bridge|safe shell/i
+        pattern: /Mac|local bridge|task/i
+      },
+      {
+        message: 'can you code yourself to make it only do a task when I use the word "task"',
+        pattern: /starts with task|\/task|conversational/i
       }
     ];
 
@@ -256,9 +260,31 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
 
     assert.equal(await taskCount(), beforeCasualTasks);
 
+    for (const message of [
+      "open Finder and show my Downloads",
+      "run ls on Desktop",
+      "inspect this repo"
+    ]) {
+      const response = await fetch(`${baseUrl}/operator/chat/messages`, {
+        body: JSON.stringify({ message }),
+        headers: {
+          "Content-Type": "application/json",
+          cookie
+        },
+        method: "POST"
+      });
+      assert.equal(response.status, 200);
+      const payload = await response.json();
+      assert.equal(payload.success, true);
+      assert.equal(payload.data.task_id, null);
+      assert.match(payload.data.reply, /Start it with task/i);
+    }
+
+    assert.equal(await taskCount(), beforeCasualTasks);
+
     const task = await fetch(`${baseUrl}/operator/chat/messages`, {
       body: JSON.stringify({
-        message: "Inspect this repo and list its package scripts"
+        message: "task inspect this repo and list its package scripts"
       }),
       headers: {
         "Content-Type": "application/json",
@@ -286,6 +312,41 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
     const origins = await database.listChatTaskOrigins(taskPayload.data.task_id);
     assert.equal(origins.length, 1);
     assert.equal(origins[0]?.channel_kind, "web");
+
+    const afterTaskCreateCount = await taskCount();
+    const status = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({
+        message: "check status"
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(status.status, 200);
+    const statusPayload = await status.json();
+    assert.equal(statusPayload.success, true);
+    assert.equal(statusPayload.data.task_id, taskPayload.data.task_id);
+    assert.match(statusPayload.data.reply, /Task|queued/i);
+    assert.doesNotMatch(statusPayload.data.reply, /Start it with task/i);
+    assert.equal(await taskCount(), afterTaskCreateCount);
+
+    const latestWork = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({
+        message: "So what did you do, did you actually adjust the code"
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(latestWork.status, 200);
+    const latestPayload = await latestWork.json();
+    assert.equal(latestPayload.success, true);
+    assert.equal(latestPayload.data.task_id, null);
+    assert.match(latestPayload.data.reply, /task|inspect this repo/i);
   });
 });
 
@@ -294,7 +355,7 @@ test("operator chat approval commands keep dangerous tasks behind gates", async 
     const cookie = await login(baseUrl);
     const create = await fetch(`${baseUrl}/operator/chat/messages`, {
       body: JSON.stringify({
-        message: "Commit and push all current changes in this repo"
+        message: "task Commit and push all current changes in this repo"
       }),
       headers: {
         "Content-Type": "application/json",
@@ -305,7 +366,7 @@ test("operator chat approval commands keep dangerous tasks behind gates", async 
     assert.equal(create.status, 200);
     const createPayload = await create.json();
     assert.ok(createPayload.data.task_id);
-    assert.match(createPayload.data.reply, /Approval needed/i);
+    assert.match(createPayload.data.reply, /Approval gate/i);
 
     const confirmation = await database.getPendingConfirmationForTask(
       createPayload.data.task_id
@@ -393,10 +454,28 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     const finderPayload = await finderRequest.json();
     assert.equal(finderPayload.success, true);
     assert.equal(finderPayload.accepted, true);
-    assert.ok(finderPayload.task_id);
-    assert.match(finderPayload.reply, /Queued/i);
+    assert.equal(finderPayload.task_id, null);
+    assert.match(finderPayload.reply, /Start it with task/i);
+    assert.equal(await taskCount(), beforeOwnerTasks);
 
-    const finderTask = await database.getTask(finderPayload.task_id);
+    const finderTaskRequest = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(
+        telegramUpdate(12345, 67890, "task open Finder and show my Downloads", 45)
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(finderTaskRequest.status, 200);
+    const finderTaskPayload = await finderTaskRequest.json();
+    assert.equal(finderTaskPayload.success, true);
+    assert.equal(finderTaskPayload.accepted, true);
+    assert.ok(finderTaskPayload.task_id);
+    assert.match(finderTaskPayload.reply, /queued task/i);
+
+    const finderTask = await database.getTask(finderTaskPayload.task_id);
     assert.ok(finderTask);
     assert.equal(finderTask.structured_request.action, "desktop_control");
     assert.equal(finderTask.structured_request.desktopMode, "full_mac");
@@ -404,12 +483,25 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
 
     await jarvisChatNotifier.taskProgress(
       finderTask,
-      "Mac step: opened Downloads.",
+      "Mac step for task 000000: opened Downloads.",
       "computer_step_completed"
     );
 
+    const shellWithoutTask = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(12345, 67890, "run ls on Desktop", 46)),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(shellWithoutTask.status, 200);
+    const shellWithoutTaskPayload = await shellWithoutTask.json();
+    assert.equal(shellWithoutTaskPayload.task_id, null);
+    assert.match(shellWithoutTaskPayload.reply, /Start it with task/i);
+
     const shellRequest = await fetch(`${baseUrl}/telegram/webhook`, {
-      body: JSON.stringify(telegramUpdate(12345, 67890, "run ls on Desktop", 44)),
+      body: JSON.stringify(telegramUpdate(12345, 67890, "task run ls on Desktop", 47)),
       headers: {
         "Content-Type": "application/json",
         "x-telegram-bot-api-secret-token": "telegram-secret"
@@ -422,9 +514,34 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     assert.equal(taskPayload.accepted, true);
     assert.ok(taskPayload.task_id);
 
+    const repoWithoutTask = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(12345, 67890, "inspect this repo", 48)),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(repoWithoutTask.status, 200);
+    const repoWithoutTaskPayload = await repoWithoutTask.json();
+    assert.equal(repoWithoutTaskPayload.task_id, null);
+    assert.match(repoWithoutTaskPayload.reply, /Start it with task/i);
+
+    const repoTask = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(12345, 67890, "task inspect this repo", 49)),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(repoTask.status, 200);
+    const repoTaskPayload = await repoTask.json();
+    assert.ok(repoTaskPayload.task_id);
+
     const riskyRequest = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(
-        telegramUpdate(12345, 67890, "Open Mail and send this email to the team", 45)
+        telegramUpdate(12345, 67890, "task Open Mail and send this email to the team", 50)
       ),
       headers: {
         "Content-Type": "application/json",
@@ -438,7 +555,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     assert.equal(riskyPayload.accepted, true);
     assert.ok(riskyPayload.task_id);
     assert.ok(riskyPayload.confirmation_id);
-    assert.match(riskyPayload.reply, /Approval needed/i);
+    assert.match(riskyPayload.reply, /Approval gate/i);
 
     const markup = telegramService.approvalReplyMarkup(riskyPayload.confirmation_id);
     assert.equal(
@@ -477,7 +594,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
 
     const denyRequest = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(
-        telegramUpdate(12345, 67890, "Open Mail and send this email to support", 46)
+        telegramUpdate(12345, 67890, "task Open Mail and send this email to support", 51)
       ),
       headers: {
         "Content-Type": "application/json",
@@ -530,8 +647,8 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     assert.ok(
       sharedMessages.some(
         (message) =>
-          message.task_id === finderPayload.task_id &&
-          message.body === "Mac step: opened Downloads."
+          message.task_id === finderTaskPayload.task_id &&
+          /Mac step/.test(message.body)
       )
     );
   });
@@ -574,15 +691,23 @@ test("sms chat delegates message interpretation to the shared Jarvis service", a
     body: "START",
     messageSid: "SMsharedstart"
   });
-  assert.match(startReply, /active/i);
+  assert.match(startReply, /online|active/i);
 
   const beforeSmsTask = await taskCount();
-  const taskReply = await smsChatService.handleInbound({
+  const noTaskReply = await smsChatService.handleInbound({
     from: "+15555550123",
     body: "run ls on Desktop",
+    messageSid: "SMsharednotask"
+  });
+  assert.match(noTaskReply, /Start it with task/i);
+  assert.equal(await taskCount(), beforeSmsTask);
+
+  const taskReply = await smsChatService.handleInbound({
+    from: "+15555550123",
+    body: "task run ls on Desktop",
     messageSid: "SMsharedtask"
   });
-  assert.match(taskReply, /Queued|task|work/i);
+  assert.match(taskReply, /queued task|task/i);
   assert.equal(await taskCount(), beforeSmsTask + 1);
 });
 

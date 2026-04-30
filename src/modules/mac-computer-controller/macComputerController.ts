@@ -104,7 +104,7 @@ const runShellTask = async (
   });
   void jarvisChatNotifier.taskProgress(
     task,
-    `Running shell command in ${cwd}: ${redactComputerText(command)}`,
+    `Running shell for task ${task.id.slice(-6)} in ${cwd}: ${redactComputerText(command)}`,
     "computer_shell_started"
   );
 
@@ -148,7 +148,7 @@ const runShellTask = async (
   });
   void jarvisChatNotifier.taskProgress(
     task,
-    summary,
+    `Shell finished for task ${task.id.slice(-6)}.\n${summary}`,
     "computer_shell_completed"
   );
 
@@ -206,7 +206,7 @@ const runGuiTask = async (
   });
   void jarvisChatNotifier.taskProgress(
     task,
-    `Starting Mac control for ${structured.targetApp ?? "the front app"}: ${structured.title}.`,
+    `Starting Mac control for task ${task.id.slice(-6)} in ${structured.targetApp ?? "the front app"}: ${structured.title}.`,
     "computer_session_started"
   );
 
@@ -221,7 +221,7 @@ const runGuiTask = async (
     actions.push(label);
     void jarvisChatNotifier.taskProgress(
       task,
-      `Mac step: ${label}.`,
+      `Mac step for task ${task.id.slice(-6)}: ${label}.`,
       "computer_step_completed"
     );
   };

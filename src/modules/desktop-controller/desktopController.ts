@@ -116,7 +116,7 @@ export const desktopController = {
     });
     void jarvisChatNotifier.taskProgress(
       task,
-      `Starting Chrome control: ${structured.title}.`,
+      `Opening Chrome for task ${task.id.slice(-6)}: ${structured.title}.`,
       "desktop_session_started"
     );
 
@@ -132,7 +132,7 @@ export const desktopController = {
     });
     void jarvisChatNotifier.taskProgress(
       task,
-      "Chrome is open. I am observing the page and planning the next browser step.",
+      "Chrome is open. Checking the page and choosing the next move.",
       "desktop_chrome_opened"
     );
 
@@ -241,7 +241,7 @@ export const desktopController = {
         });
         void jarvisChatNotifier.taskProgress(
           task,
-          `Approval needed before the next Chrome step: ${safety.reason}`,
+          `Chrome hit an approval gate on task ${task.id.slice(-6)}: ${safety.reason}`,
           "desktop_confirmation_required"
         );
         return {
@@ -285,7 +285,7 @@ export const desktopController = {
         });
         void jarvisChatNotifier.taskProgress(
           task,
-          `Chrome task completed: ${summary}`,
+          `Chrome finished task ${task.id.slice(-6)}: ${summary}`,
           "desktop_action_completed"
         );
         return {
@@ -337,7 +337,7 @@ export const desktopController = {
       });
       void jarvisChatNotifier.taskProgress(
         task,
-        `Chrome step ${step}: ${latestAction}.`,
+        `Chrome step ${step} on task ${task.id.slice(-6)}: ${latestAction}.`,
         "desktop_action_completed"
       );
     }
@@ -453,7 +453,7 @@ const runChromeWithoutDom = async (
   });
   void jarvisChatNotifier.taskProgress(
     task,
-    `Chrome navigation completed: ${page.title || page.url || targetUrl}.`,
+    `Chrome navigated for task ${task.id.slice(-6)}: ${page.title || page.url || targetUrl}.`,
     "desktop_action_completed"
   );
 

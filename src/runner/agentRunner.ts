@@ -79,7 +79,7 @@ const main = async (): Promise<void> => {
       });
       void jarvisChatNotifier.taskProgress(
         claimed.task,
-        `Started: ${claimed.task.title}. I claimed it on ${runnerId} and I'm working now.`,
+        `I picked up task ${claimed.task.id.slice(-6)} on ${runnerId}. Moving now: ${claimed.task.title}.`,
         "task_started"
       );
 

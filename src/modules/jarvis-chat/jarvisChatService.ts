@@ -2,6 +2,7 @@ import { z } from "zod";
 import { auditLog } from "../audit-log/auditLogService.js";
 import { taskService } from "../execution-engine/taskService.js";
 import { database } from "../../services/dbService.js";
+import { JARVIS_SOUL_PROMPT } from "./jarvisSoul.js";
 import type {
   ChatChannelKind,
   ChatConversationRecord,
@@ -81,23 +82,30 @@ const jarvisIntentSchema = z.discriminatedUnion("kind", [
 type JarvisIntent = z.infer<typeof jarvisIntentSchema>;
 
 const FALLBACK_REPLY =
-  "I'm here. I can chat, check task status, or turn a concrete ask into queued work. For computer control, give me a Mac/local-bridge task and I'll route risky steps through approval.";
+  "I'm here. Talk normally, ask for status, or start a real command with task. That last word is the clutch so I don't accidentally start moving your Mac around because you were thinking out loud.";
 const HELP_REPLY =
-  "I can chat through Telegram, SMS, and the website; queue repo/code work; check status; handle approvals; and use the Mac local bridge for Chrome, Finder, app, screenshot, and safe shell tasks. Commits, pushes, deploys, secrets, deletes, payment/account moves, and destructive actions still stop for approval.";
+  "I can chat through Telegram, SMS, and the website; check status; handle approvals; and use the Mac bridge for Chrome, Finder, apps, screenshots, and safe shell commands. To queue work, start with task. Risky moves still stop for approval.";
 const START_REPLY =
-  "Jarvis is active. Send hello, status, or the task you want moved forward.";
+  "Back online. Send hello, status, or start with task when you want me to actually do work.";
 const STOP_REPLY =
   "Jarvis chat is paused for this channel. Send START to resume.";
 const OPTED_OUT_REPLY =
   "Jarvis chat is paused for this channel. Send START to resume.";
 const GREETING_REPLY =
-  "Online. I'm Jarvis: chat in, task queue out. I can talk here, check status, queue repo work, operate the Mac through the local bridge, and keep approval gates where they belong.";
+  "Here. Jarvis online. Chat normally; say task when you want me to touch the queue. Keeps the cockpit from turning every stray thought into a launch sequence.";
 const IDENTITY_REPLY =
   "I'm Jarvis, Blake's engineering intelligence for CallAI, repo work, status checks, approvals, and Mac local-bridge operations. Calm mission control, slightly more caffeinated than the dashboard.";
 const COMPUTER_CONTROL_REPLY =
-  "Yes. Telegram can queue work for the Mac local bridge: Chrome, Finder, visible apps, screenshots, and safe shell/file commands. Risky moves like sends, deletes, settings changes, commits, pushes, deploys, secrets, payments, and admin actions still require approval.";
+  "Yes. I can operate the Mac through the local bridge: Chrome, Finder, visible apps, screenshots, and safe shell/file commands. Start with task when you want me to act. Risky moves still hit the approval gate.";
 const OPENCLAW_REPLY =
   "That's the intended shape: Telegram, SMS, and the website all feed one Jarvis thread, then I route real work into CallAI tasks, Codex-thread jobs, or the local bridge. Messaging app on the front, operator system underneath.";
+const SELF_ROUTING_REPLY =
+  "Yes. That's the right boundary. I'll only queue new work when your message starts with task, /task, or task:. Everything else stays conversational unless it's status, approve, deny, continue, or cancel.";
+const SOUL_TONE = {
+  direct: JARVIS_SOUL_PROMPT.includes("Direct. Zero filler."),
+  noSycophancy: JARVIS_SOUL_PROMPT.includes("No sycophancy"),
+  neverAsAi: JARVIS_SOUL_PROMPT.includes("As an AI")
+};
 
 type ChatReplyContext = {
   body: string;
@@ -246,7 +254,9 @@ const routeMessage = async (input: {
   }
 
   const history = await database.listChatMessages({ limit: 12 });
-  const deterministicReply = deterministicChatReply(input.body);
+  const deterministicReply = isCommandLikeMessage(input.body)
+    ? null
+    : deterministicChatReply(input.body);
 
   if (deterministicReply) {
     return { intent: "chat_reply", reply: deterministicReply };
@@ -327,7 +337,7 @@ const chatReply = async (
     return { intent: "chat_reply", reply: classifierReply };
   }
 
-  return { intent: "chat_reply", reply: fallbackCasualReply(body) };
+  return { intent: "chat_reply", reply: await fallbackCasualReply(body) };
 };
 
 const createTaskReply = async (
@@ -368,7 +378,7 @@ const createTaskReply = async (
       intent: "create_task",
       confirmationId: task.confirmation_id,
       taskId: task.task_id,
-      reply: `Approval needed: ${task.interpreted_task.title}. Reply approve ${confirmationTail} or deny ${confirmationTail}.`
+      reply: `Approval gate. Task ${tail}: ${task.interpreted_task.title}. Reply approve ${confirmationTail} or deny ${confirmationTail}.`
     };
   }
 
@@ -376,7 +386,7 @@ const createTaskReply = async (
     return {
       intent: "create_task",
       taskId: task.task_id,
-      reply: `Blocked: ${task.interpreted_task.title}. I will not handle passwords, 2FA, CAPTCHAs, secrets, banking, payment execution, credential harvesting, or security bypass.`
+      reply: `Hard stop on task ${tail}: ${task.interpreted_task.title}. I do not handle passwords, 2FA, CAPTCHAs, secrets, banking, payment execution, credential harvesting, or security bypass.`
     };
   }
 
@@ -384,14 +394,14 @@ const createTaskReply = async (
     return {
       intent: "create_task",
       taskId: task.task_id,
-      reply: `Sent to Codex chat: ${task.interpreted_task.title}. Task ${tail}. I'll report back here when it finishes.`
+      reply: `Got it. I sent task ${tail} to the Codex chat: ${task.interpreted_task.title}. I'll report back here when it moves.`
     };
   }
 
   return {
     intent: "create_task",
     taskId: task.task_id,
-    reply: `Queued: ${task.interpreted_task.title}. Task ${tail}. I'll report back here when it finishes.`
+    reply: `Got it. I queued task ${tail}: ${task.interpreted_task.title}. I'll report back here when it moves.`
   };
 };
 
@@ -620,12 +630,55 @@ const formatTaskStatus = (status: TaskStatusResult): string => {
   return `Task ${tail} is ${formatLabel(task.status)}: ${task.title}.${summary}`;
 };
 
+const explicitTaskRequest = (body: string): string | null => {
+  const trimmed = body.trim();
+  const match = trimmed.match(/^(?:jarvis[,\s]+)?(?:please\s+)?(?:\/task|task)\b(?:\s*[:\-]\s*|\s+)([\s\S]+)$/i);
+  const utterance = match?.[1]?.trim();
+  return utterance && utterance.length >= 3 ? utterance : null;
+};
+
+const isCommandLikeMessage = (body: string): boolean => {
+  const lower = body.trim().toLowerCase();
+
+  return (
+    explicitTaskRequest(body) !== null ||
+    /^\s*(yes|approve|approved|go ahead|proceed)\b/.test(lower) ||
+    /^\s*(no|deny|denied|do not)\b/.test(lower) ||
+    /\b(status|what'?s running|progress|finished|done yet)\b/.test(lower) ||
+    /\b(continue|resume|keep going|try again)\b/.test(lower) ||
+    /\b(cancel|stop task|kill task)\b/.test(lower)
+  );
+};
+
+const looksLikeActionRequest = (body: string): boolean => {
+  const lower = body.trim().toLowerCase();
+
+  return (
+    /\b(inspect|check|run|test|fix|update|edit|build|commit|push|open pr|pull request|summarize|repo|readme|deploy|logs?|chrome|browser|website|go to|navigate|search|open|finder|terminal|system settings|settings app|mail|messages|notes|calendar|desktop|downloads|documents|screenshot|screen shot|shell command|list files|show files)\b/.test(
+      lower
+    ) ||
+    /\b[a-z0-9-]+\.(?:com|org|net|ai|io|dev|app|co|edu|gov)\b/.test(lower)
+  );
+};
+
 const deterministicChatReply = (body: string): string | null => {
   const trimmed = body.trim();
   const lower = trimmed.toLowerCase();
 
-  if (/^(hi|hello|hey|yo|test|ping|\/start)[!. ]*$/i.test(trimmed)) {
+  if (
+    /^(hi|hello|hey|yo|sup|test|ping|\/start)\b[!. ,a-z]*$/i.test(trimmed) &&
+    !looksLikeActionRequest(trimmed)
+  ) {
     return GREETING_REPLY;
+  }
+
+  if (
+    /\b(code|program|change|adjust|make)\b.*\b(only|just)\b.*\b(task)\b/.test(
+      lower
+    ) ||
+    /\b(use|say|include)\b.*\b(word ['"]?task['"]?)\b/.test(lower)
+  ) {
+    return SELF_ROUTING_REPLY;
   }
 
   if (
@@ -652,17 +705,76 @@ const deterministicChatReply = (body: string): string | null => {
     return HELP_REPLY;
   }
 
+  if (looksLikeActionRequest(trimmed) && !explicitTaskRequest(trimmed)) {
+    return taskTriggerReply(trimmed);
+  }
+
   return null;
 };
 
-const fallbackCasualReply = (body: string): string => {
+const fallbackCasualReply = async (body: string): Promise<string> => {
   const lower = body.trim().toLowerCase();
 
+  if (/\b(what did you do|what'd you do|did you actually|what happened|what changed)\b/.test(lower)) {
+    return latestWorkReply();
+  }
+
   if (lower.includes("?")) {
-    return "Here's the honest boundary: I can chat, check status, and turn concrete repo/code/Mac-control asks into queued CallAI work. For anything risky, I stop at the approval gate.";
+    return "Short version: I can talk through it, check status, and run real work when you start with task. Risky moves still pause for approval. Boring rule, useful outcome.";
   }
 
   return FALLBACK_REPLY;
+};
+
+const latestWorkReply = async (): Promise<string> => {
+  const latest = await resolveTask();
+
+  if (!latest) {
+    return "Nothing moved yet. The queue is clean. If you want action, start with task and I'll take the wheel.";
+  }
+
+  const status = await taskService.getStatus(latest.id);
+  const summary = status.final_summary
+    ? ` ${status.final_summary}`
+    : status.runs[0]?.final_summary
+      ? ` ${status.runs[0].final_summary}`
+      : "";
+
+  if (latest.status === "succeeded") {
+    return `I finished task ${latest.id.slice(-6)}: ${latest.title}.${summary}`;
+  }
+
+  if (latest.status === "running") {
+    return `I'm still moving on task ${latest.id.slice(-6)}: ${latest.title}. ${nextTaskHint(status)}`;
+  }
+
+  if (latest.status === "queued") {
+    return `Task ${latest.id.slice(-6)} is queued: ${latest.title}. It has not been picked up yet.`;
+  }
+
+  if (latest.status === "needs_confirmation") {
+    return formatTaskStatus(status);
+  }
+
+  return `Latest task ${latest.id.slice(-6)} is ${formatLabel(latest.status)}: ${latest.title}.${summary}`;
+};
+
+const nextTaskHint = (status: TaskStatusResult): string => {
+  if (status.latest_events[0]) {
+    return `Last signal: ${formatLabel(status.latest_events[0].event_type)}.`;
+  }
+
+  return "No useful event signal yet.";
+};
+
+const taskTriggerReply = (body: string): string => {
+  const example = explicitTaskExample(body);
+  return `I can do that. Start it with task so I know you want execution, not discussion. Example: ${example}`;
+};
+
+const explicitTaskExample = (body: string): string => {
+  const cleaned = body.trim().replace(/[.?!]+$/, "");
+  return `task ${cleaned}`;
 };
 
 const isGenericChatReply = (reply: string): boolean => {
@@ -680,12 +792,7 @@ const heuristicIntent = (body: string): JarvisIntent => {
   const trimmed = body.trim();
   const lower = trimmed.toLowerCase();
   const ref = lower.match(/\b(?:task|approval|confirmation)?\s*([a-f0-9]{4,12})\b/i)?.[1];
-
-  const deterministicReply = deterministicChatReply(body);
-
-  if (deterministicReply) {
-    return { kind: "chat_reply", reply: deterministicReply };
-  }
+  const taskRequest = explicitTaskRequest(trimmed);
 
   if (/^\s*(yes|approve|approved|go ahead|proceed)\b/.test(lower)) {
     return { kind: "approve_confirmation", ...(ref ? { confirmationRef: ref } : {}) };
@@ -715,19 +822,26 @@ const heuristicIntent = (body: string): JarvisIntent => {
     };
   }
 
-  if (
-    /\b(inspect|check|run|test|fix|update|edit|build|commit|push|open pr|pull request|summarize|repo|readme|deploy|logs?|chrome|browser|website|go to|navigate|search|open|finder|terminal|system settings|settings app|mail|messages|notes|calendar|desktop|downloads|documents|screenshot|screen shot|shell command|list files|show files)\b/.test(
-      lower
-    ) ||
-    /\b[a-z0-9-]+\.(?:com|org|net|ai|io|dev|app|co|edu|gov)\b/.test(lower)
-  ) {
-    return { kind: "create_task", utterance: trimmed };
+  const deterministicReply = deterministicChatReply(body);
+
+  if (deterministicReply) {
+    return { kind: "chat_reply", reply: deterministicReply };
+  }
+
+  if (taskRequest) {
+    return { kind: "create_task", utterance: taskRequest };
+  }
+
+  if (looksLikeActionRequest(trimmed)) {
+    return {
+      kind: "chat_reply",
+      reply: taskTriggerReply(trimmed)
+    };
   }
 
   return {
     kind: "chat_reply",
-    reply:
-      "I can do that through a task when you make it concrete. Try something like: open Finder and show Downloads, run ls on Desktop, inspect this repo, or check status."
+    reply: FALLBACK_REPLY
   };
 };
 
@@ -765,5 +879,26 @@ const sanitizeReply = (value: string): string => {
     .replace(/AC[a-fA-F0-9]{32}/g, "[redacted Twilio SID]")
     .replace(/[a-fA-F0-9]{32,}/g, "[redacted token]");
 
-  return redacted.length > 1000 ? `${redacted.slice(0, 997)}...` : redacted;
+  const toned = applySoulTone(redacted);
+  return toned.length > 1000 ? `${toned.slice(0, 997)}...` : toned;
+};
+
+const applySoulTone = (value: string): string => {
+  let reply = value;
+
+  if (SOUL_TONE.direct) {
+    reply = reply
+      .replace(/^(great question|certainly|sure thing|of course)[!. ]+/i, "")
+      .trim();
+  }
+
+  if (SOUL_TONE.neverAsAi) {
+    reply = reply.replace(/\bas an ai\b/gi, "as Jarvis");
+  }
+
+  if (SOUL_TONE.noSycophancy) {
+    reply = reply.replace(/\byou'?re absolutely right\b/gi, "Right");
+  }
+
+  return reply;
 };
