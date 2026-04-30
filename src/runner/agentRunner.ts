@@ -31,6 +31,8 @@ const main = async (): Promise<void> => {
     task_scope: taskScope,
     desktop_control: desktopControlEnabled ? "enabled" : "disabled",
     full_computer_control: fullComputerControlEnabled ? "enabled" : "disabled",
+    chat_routing: "deterministic",
+    model_execution: "codex_cli",
     database: isDatabaseConfigured() ? "configured" : "memory"
   });
 
@@ -156,6 +158,8 @@ const logPreflight = async (): Promise<void> => {
       task_scope: taskScope,
       desktop_control: desktopControlEnabled,
       full_computer_control: fullComputerControlEnabled,
+      chat_routing: "deterministic",
+      model_execution: "codex_cli",
       code_execution_mode: process.env.CODEX_EXECUTION_MODE || "local"
     }
   };

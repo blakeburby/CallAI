@@ -1,46 +1,8 @@
-import { z } from "zod";
-import { completeJson } from "../../services/openaiService.js";
 import {
-  normalizedActions,
-  permissionLevels,
   type DeveloperTask,
   type NormalizedAction,
   type PermissionLevel
 } from "../../types/operator.js";
-import { logger } from "../../utils/logger.js";
-
-const developerTaskSchema = z
-  .object({
-    action: z.enum(normalizedActions),
-    title: z.string().min(3).max(140),
-    repoAlias: z.string().min(1).max(120).optional(),
-    repoId: z.string().min(1).optional(),
-    branchPolicy: z.literal("new_branch_required"),
-    permissionRequired: z.enum(permissionLevels),
-    instructions: z.string().min(3).max(5000),
-    acceptanceCriteria: z.array(z.string().min(1).max(280)).min(1).max(8),
-    chatTarget: z.string().min(1).max(140).optional(),
-    targetApp: z.string().min(1).max(120).optional(),
-    url: z.string().url().optional(),
-    riskLevel: z.enum(["low", "needs_confirmation", "blocked"]).optional(),
-    desktopMode: z.enum(["normal_chrome", "full_mac", "local_shell"]).optional(),
-    desktopApprovalGranted: z.boolean().optional(),
-    shellCommand: z.string().min(1).max(1200).optional(),
-    shellCwd: z.string().min(1).max(500).optional(),
-    confidence: z.number().min(0).max(1),
-    postApprovalAction: z
-      .object({
-        action: z.enum(["commit_changes", "open_pull_request"]),
-        branchName: z.string().min(1).max(180).optional(),
-        commitMessage: z.string().min(1).max(180).optional(),
-        pullRequestTitle: z.string().min(1).max(180).optional(),
-        pullRequestBody: z.string().min(1).max(4000).optional(),
-        draft: z.boolean().optional()
-      })
-      .strict()
-      .optional()
-  })
-  .strict();
 
 export const parseDeveloperTask = async (
   utterance: string
@@ -49,23 +11,6 @@ export const parseDeveloperTask = async (
 
   if (!trimmed) {
     throw new Error("A spoken request is required.");
-  }
-
-  try {
-    const parsed = await completeJson<unknown>({
-      system:
-        "Convert spoken developer operations requests into one DeveloperTask JSON object. Use exactly these actions: inspect_repo, edit_files, run_tests, create_branch, commit_changes, open_pull_request, send_chat_message, summarize_project, query_logs, desktop_control, delegate_to_codex, continue_existing_task. Use desktop_control for local Mac computer control. For browser/Chrome tasks set targetApp to Chrome and desktopMode to normal_chrome. For Finder, Terminal, System Settings, Mail, desktop windows, arbitrary visible apps, app launching, screenshots, clicking, typing, hotkeys, or local GUI work set desktopMode to full_mac and targetApp to the app name or any. For local shell commands set desktopMode to local_shell, targetApp to shell, shellCommand to the exact command, and shellCwd when the user names a folder. Set riskLevel low for app opening, navigation, screenshots, local inspection, read-only shell commands, and routine non-sensitive work; needs_confirmation for external sends/posts, deletes/trash, moving many files, uploads, account/settings changes, commits, pushes, deploys, or admin-like actions; blocked for passwords, secrets, API keys, 2FA, CAPTCHAs, banking, payments, purchases, credential harvesting, or security bypass. Use branchPolicy new_branch_required. Mark deleting files, force pushing, merging to main, production deploys, mass rewrites, and environment or secret changes as destructive_admin. Mark commits, pushes, pull requests, external chat sends, and risky computer actions as full_write. Mark file edits, test additions, safe local shell commands, and low-risk computer control as safe_write. Mark repo inspection, summaries, and logs as read_only. Include practical acceptance criteria and a confidence score from 0 to 1.",
-      user: trimmed,
-      maxTokens: 800
-    });
-
-    if (parsed) {
-      return developerTaskSchema.parse(parsed);
-    }
-  } catch (error) {
-    logger.warn("OpenAI task parsing failed; using heuristic parser", {
-      error: error instanceof Error ? error.message : String(error)
-    });
   }
 
   return heuristicParse(trimmed);
@@ -428,8 +373,4 @@ const normalizeUrl = (value: string): string => {
 
 const cleanSearchQuery = (value: string): string => {
   return value.replace(/[.!?]+$/g, "").trim();
-};
-
-export const validateDeveloperTask = (value: unknown): DeveloperTask => {
-  return developerTaskSchema.parse(value);
 };

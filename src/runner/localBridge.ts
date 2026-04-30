@@ -4,7 +4,7 @@ import path from "node:path";
 const workspaceRoot =
   process.env.LOCAL_BRIDGE_REPO_PATH ||
   process.env.DEFAULT_REPO_PATH ||
-  "/Users/blakeburby/Desktop/CallAI-main";
+  "/Users/blakeburby/Developer/CallAI-main";
 
 process.env.RUNNER_ID =
   process.env.LOCAL_BRIDGE_RUNNER_ID || "macbook-local-bridge";

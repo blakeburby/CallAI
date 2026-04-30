@@ -417,7 +417,7 @@ export const redactComputerText = (value: string): string => {
       /\b([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|PASSCODE|AUTH)[A-Z0-9_]*)\s*=\s*([^\s]+)/gi,
       "$1=[redacted]"
     )
-    .replace(/sk-[a-zA-Z0-9_-]{16,}/g, "[redacted OpenAI key]")
+    .replace(/sk-[a-zA-Z0-9_-]{16,}/g, "[redacted API key]")
     .replace(/AC[a-fA-F0-9]{32}/g, "[redacted Twilio SID]")
     .replace(/[a-fA-F0-9]{32,}/g, "[redacted token]");
 };

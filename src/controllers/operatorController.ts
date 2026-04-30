@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { chatConnector } from "../modules/chat-connector/chatConnector.js";
 import { taskService } from "../modules/execution-engine/taskService.js";
 import { vapiCallService } from "../modules/voice-calls/vapiCallService.js";
-import { summarizeForVoice } from "../services/openaiService.js";
+import { summarizeForVoice } from "../services/voiceIntentService.js";
 import { logger } from "../utils/logger.js";
 import { sendToolPayload } from "../utils/vapiTooling.js";
 

@@ -746,7 +746,7 @@ const repoForCurrentRunner = (repo: RepoRecord): RepoRecord => {
 };
 
 const isRunnerConfigurationIssue = (message: string): boolean => {
-  return /failed to start|enoent|no such file|command not found|not authenticated|authentication|log in|login|api key|openai_api_key|codex_home|desktop control requires|desktop control blocked/i.test(
+  return /failed to start|enoent|no such file|command not found|not authenticated|authentication|log in|login|api key|codex_home|desktop control requires|desktop control blocked/i.test(
     message
   );
 };

@@ -90,7 +90,7 @@ const notify = async (input: {
 
 const redactSensitiveText = (value: string): string => {
   const redacted = value
-    .replace(/sk-[a-zA-Z0-9_-]{16,}/g, "[redacted OpenAI key]")
+    .replace(/sk-[a-zA-Z0-9_-]{16,}/g, "[redacted API key]")
     .replace(/AC[a-fA-F0-9]{32}/g, "[redacted Twilio SID]")
     .replace(/[a-fA-F0-9]{32,}/g, "[redacted token]")
     .replace(

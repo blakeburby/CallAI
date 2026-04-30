@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 
 process.env.DATABASE_URL = "";
 process.env.FRONTEND_PASSCODE = "test-passcode";
-process.env.OPENAI_API_KEY = "";
+process.env.OPENAI_API_KEY = "sk-invalid-runtime-should-not-be-used";
 process.env.TELEGRAM_BOT_TOKEN = "";
 process.env.TELEGRAM_OWNER_USER_ID = "12345";
 process.env.TELEGRAM_WEBHOOK_SECRET = "telegram-secret";
@@ -179,6 +179,25 @@ test("full-computer parser and runner claim gates route Mac tasks safely", async
   assert.equal(fullClaim?.task.id, finder.task_id);
 });
 
+test("deterministic runtime ignores invalid OpenAI API keys", async () => {
+  const task = await taskService.createFromUtterance({
+    utterance: "Open Finder and show my Downloads",
+    source: "telegram"
+  });
+  assert.equal(task.status, "queued");
+  assert.equal(task.interpreted_task.action, "desktop_control");
+  assert.equal(task.interpreted_task.desktopMode, "full_mac");
+  assert.equal(task.interpreted_task.targetApp, "Finder");
+
+  const shell = await taskService.createFromUtterance({
+    utterance: "run ls on Desktop",
+    source: "sms"
+  });
+  assert.equal(shell.status, "queued");
+  assert.equal(shell.interpreted_task.desktopMode, "local_shell");
+  assert.equal(shell.interpreted_task.shellCommand, "ls");
+});
+
 test("Mac computer controller safety helpers classify shell and GUI risk", () => {
   assert.equal(classifyShellCommandRisk("ls -la", "/Users/blakeburby/Desktop"), "low");
   assert.equal(classifyShellCommandRisk("rm -rf ~/Desktop/test"), "needs_confirmation");
@@ -190,10 +209,7 @@ test("Mac computer controller safety helpers classify shell and GUI risk", () =>
   );
   assert.equal(classifyComputerInstructionRisk("enter my password"), "blocked");
   assert.equal(inferShellCommandFromInstructions("run ls on Desktop"), "ls");
-  assert.equal(
-    redactComputerText("OPENAI_API_KEY=sk-secretvalue123456789"),
-    "OPENAI_API_KEY=[redacted]"
-  );
+  assert.equal(redactComputerText("API_KEY=sk-secretvalue123456789"), "API_KEY=[redacted]");
 });
 
 test("operator chat shares Jarvis history and only creates tasks for task requests", async () => {
@@ -360,6 +376,20 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     });
     assert.equal(await taskCount(), beforeOwnerTasks);
 
+    const taskRequest = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(12345, 67890, "run ls on Desktop", 44)),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(taskRequest.status, 200);
+    const taskPayload = await taskRequest.json();
+    assert.equal(taskPayload.success, true);
+    assert.equal(taskPayload.accepted, true);
+    assert.ok(taskPayload.task_id);
+
     const sharedMessages = await database.listChatMessages({ limit: 20 });
     assert.ok(
       sharedMessages.some(
@@ -414,6 +444,15 @@ test("sms chat delegates message interpretation to the shared Jarvis service", a
     messageSid: "SMsharedstart"
   });
   assert.match(startReply, /active/i);
+
+  const beforeSmsTask = await taskCount();
+  const taskReply = await smsChatService.handleInbound({
+    from: "+15555550123",
+    body: "run ls on Desktop",
+    messageSid: "SMsharedtask"
+  });
+  assert.match(taskReply, /Queued|task|work/i);
+  assert.equal(await taskCount(), beforeSmsTask + 1);
 });
 
 const telegramUpdate = (

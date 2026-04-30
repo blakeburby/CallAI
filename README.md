@@ -120,7 +120,7 @@ DATABASE_URL=postgresql://... npm run db:seed
 The migration lives at `db/migrations/001_remote_developer_operator.sql`.
 The seed command inserts the default repo and aliases from `DEFAULT_REPO_*`.
 
-The browser never receives `DATABASE_URL`, OpenAI keys, Vapi private keys, or tool secrets.
+The browser never receives `DATABASE_URL`, Vapi private keys, Codex credentials, or tool secrets.
 
 ## Railway Worker
 
@@ -134,7 +134,6 @@ The checked-in `railway.toml` sets that worker command. Configure the worker wit
 
 - `DATABASE_URL`
 - `DATABASE_SSL=auto`
-- `OPENAI_API_KEY`
 - `CODEX_EXECUTABLE=codex`
 - `CODEX_EXECUTION_MODE=local`
 - `DEFAULT_REPO_OWNER`, `DEFAULT_REPO_NAME`, `DEFAULT_REPO_URL`, `DEFAULT_REPO_PATH`, and `DEFAULT_REPO_BRANCH`
@@ -155,7 +154,7 @@ The local bridge uses the same Railway Postgres queue as Vercel and Railway, but
 
 - `RUNNER_ID=macbook-local-bridge`
 - `CODEX_EXECUTABLE=/Applications/Codex.app/Contents/Resources/codex`
-- `DEFAULT_REPO_PATH=/Users/blakeburby/Desktop/CallAI-main`
+- `DEFAULT_REPO_PATH=/Users/blakeburby/Developer/CallAI-main`
 - `CODEX_EXECUTION_MODE=local`
 
 It claims queued tasks, logs runner metadata to the audit timeline, creates `callai/*` branches for write tasks, and invokes:
@@ -209,11 +208,11 @@ npm run build
 npm run local-bridge
 ```
 
-LaunchAgent setup, after `.env` contains `DATABASE_URL`, `OPENAI_API_KEY`, and the bridge env values. The checked-in LaunchAgent uses `/Users/blakeburby/CallAI-local-bridge` instead of the Desktop checkout so macOS background privacy controls do not block access to the working directory.
+LaunchAgent setup, after `.env` contains `DATABASE_URL`, Codex executable settings, and the bridge env values. The checked-in LaunchAgent uses `/Users/blakeburby/CallAI-local-bridge` instead of the Desktop checkout so macOS background privacy controls do not block access to the working directory.
 
 ```bash
 git clone https://github.com/blakeburby/CallAI.git /Users/blakeburby/CallAI-local-bridge
-cp /Users/blakeburby/Desktop/CallAI-main/.env /Users/blakeburby/CallAI-local-bridge/.env
+cp /Users/blakeburby/Developer/CallAI-main/.env /Users/blakeburby/CallAI-local-bridge/.env
 cd /Users/blakeburby/CallAI-local-bridge
 npm install
 npm run build
@@ -239,7 +238,7 @@ project's Codex thread instead of letting background runners claim them. Desktop
 Chrome work and project-chat updates still use the existing runner paths.
 
 The bridge uses Railway Postgres as the inbox. A Codex heartbeat automation runs
-from `/Users/blakeburby/Desktop/CallAI-main`, claims one waiting task with
+from `/Users/blakeburby/Developer/CallAI-main`, claims one waiting task with
 `npm run codex-thread:claim`, completes the work in this chat, then records the
 result with `npm run codex-thread:complete` or `npm run codex-thread:fail`.
 
@@ -283,11 +282,11 @@ The protected operator console now exposes exact SMS health without exposing sec
 - recent Twilio error code and message
 - recent message/failure rows and next-step attention items
 
-Twilio auth tokens, OpenAI keys, Vapi private keys, full phone numbers, and `DATABASE_URL` are never exposed in the browser UI.
+Twilio auth tokens, Vapi private keys, Codex credentials, full phone numbers, and `DATABASE_URL` are never exposed in the browser UI.
 
 ## Runner
 
-The runner logs a startup preflight for database connectivity, `codex --version`, and workspace settings. Then it polls for `tasks.status = 'queued'`, atomically claims one task with `FOR UPDATE SKIP LOCKED`, creates an execution run, and:
+The runner logs a startup preflight for database connectivity, `codex --version`, deterministic chat routing, and workspace settings. Then it polls for `tasks.status = 'queued'`, atomically claims one task with `FOR UPDATE SKIP LOCKED`, creates an execution run, and:
 
 - inspects repos directly for read-only tasks
 - runs configured package tests for test tasks

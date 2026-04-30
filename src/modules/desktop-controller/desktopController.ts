@@ -3,7 +3,6 @@ import { readFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { auditLog } from "../audit-log/auditLogService.js";
-import { completeJson } from "../../services/openaiService.js";
 import { database } from "../../services/dbService.js";
 import type {
   DeveloperTask,
@@ -445,36 +444,6 @@ const planNextAction = async (input: {
   step: number;
   maxSteps: number;
 }): Promise<DesktopAction> => {
-  try {
-    const parsed = await completeJson<unknown>({
-      model: process.env.DESKTOP_PLANNER_MODEL ?? "gpt-4o-mini",
-      maxTokens: 500,
-      system:
-        "You are Jarvis controlling Blake's visible normal Chrome browser. Return one JSON object for the next safe browser action. Allowed action values: navigate, click, type, select, submit, wait, done, ask_user, blocked. Prefer selectors from the provided elements. Use done when the objective is complete. Use ask_user before externally visible or account-changing actions. Use blocked for passwords, secrets, payment/banking flows, purchases, CAPTCHAs, or credential harvesting. Never include secret values.",
-      user: JSON.stringify({
-        objective: input.structured.instructions,
-        url_hint: input.targetUrl,
-        risk_level: input.structured.riskLevel ?? "low",
-        approval_granted: input.structured.desktopApprovalGranted === true,
-        step: input.step,
-        max_steps: input.maxSteps,
-        page: {
-          title: input.observation.title,
-          url: input.observation.url,
-          text: input.observation.text.slice(0, 3500),
-          elements: input.observation.elements.slice(0, 45).map(redactElement)
-        },
-        previous_actions: input.history
-      })
-    });
-
-    if (parsed) {
-      return desktopActionSchema.parse(parsed);
-    }
-  } catch {
-    // Heuristic fallback keeps the local bridge useful when OpenAI planning is unavailable.
-  }
-
   return fallbackAction(input);
 };
 
