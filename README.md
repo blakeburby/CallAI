@@ -61,6 +61,10 @@ Set `RUNNER_ENABLE_FULL_COMPUTER_CONTROL=true` for Telegram/website tasks that
 need full Mac GUI or local shell control. Without it, the bridge only claims the
 existing normal Chrome desktop tasks.
 
+Set `JARVIS_CODEX_CHAT_ENABLED=true` to let Telegram casual messages use the
+local bridge's Codex CLI for delayed soul-style replies. Task execution still
+requires the explicit `task ...` trigger.
+
 For local bridge development without a build, use `npm run local-bridge:dev`.
 
 Route queued repo work into this Codex chat:

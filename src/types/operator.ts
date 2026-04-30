@@ -45,6 +45,13 @@ export const taskExecutionTargets = ["runner", "codex_thread"] as const;
 export const chatChannelKinds = ["web", "sms", "telegram"] as const;
 export const chatMessageDirections = ["inbound", "outbound", "system"] as const;
 export const chatMessageRoles = ["user", "assistant", "system"] as const;
+export const jarvisChatReplyJobStatuses = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "expired"
+] as const;
 
 export type NormalizedAction = (typeof normalizedActions)[number];
 export type PermissionLevel = (typeof permissionLevels)[number];
@@ -55,6 +62,7 @@ export type TaskExecutionTarget = (typeof taskExecutionTargets)[number];
 export type ChatChannelKind = (typeof chatChannelKinds)[number];
 export type ChatMessageDirection = (typeof chatMessageDirections)[number];
 export type ChatMessageRole = (typeof chatMessageRoles)[number];
+export type JarvisChatReplyJobStatus = (typeof jarvisChatReplyJobStatuses)[number];
 
 export type DeveloperTask = {
   action: NormalizedAction;
@@ -297,6 +305,21 @@ export type ChatMessageRecord = {
   provider_message_id: string | null;
   payload: Record<string, unknown>;
   created_at: string;
+};
+
+export type JarvisChatReplyJobRecord = {
+  id: string;
+  conversation_id: string;
+  inbound_message_id: string;
+  status: JarvisChatReplyJobStatus;
+  worker_id: string | null;
+  claimed_at: string | null;
+  completed_at: string | null;
+  expires_at: string;
+  reply_body: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ChatMessageTaskLinkRecord = {

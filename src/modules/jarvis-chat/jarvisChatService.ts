@@ -3,6 +3,7 @@ import { auditLog } from "../audit-log/auditLogService.js";
 import { taskService } from "../execution-engine/taskService.js";
 import { database } from "../../services/dbService.js";
 import { JARVIS_SOUL_PROMPT } from "./jarvisSoul.js";
+import { jarvisCodexChatService } from "./jarvisCodexChatService.js";
 import type {
   ChatChannelKind,
   ChatConversationRecord,
@@ -24,8 +25,9 @@ type HandleMessageInput = {
 
 type HandleMessageResult = {
   conversation: ChatConversationRecord;
-  intent: JarvisIntent["kind"];
+  intent: JarvisIntent["kind"] | "queued_casual_reply";
   reply: string;
+  casualReplyJobId?: string;
   confirmationId?: string;
   taskId?: string;
   messages: JarvisChatMessageView[];
@@ -114,6 +116,22 @@ type ChatReplyContext = {
 
 type ChatKeyword = "help" | "start" | "stop";
 
+const shouldQueueCodexCasualReply = (input: {
+  body: string;
+  channelKind: ChatChannelKind;
+  conversation: ChatConversationRecord;
+  keyword: ChatKeyword | null;
+}): boolean => {
+  return (
+    input.channelKind === "telegram" &&
+    jarvisCodexChatService.isEnabled() &&
+    input.conversation.status !== "stopped" &&
+    !input.keyword &&
+    !isCommandLikeMessage(input.body) &&
+    !looksLikeActionRequest(input.body)
+  );
+};
+
 export const jarvisChatService = {
   async handleMessage(input: HandleMessageInput): Promise<HandleMessageResult> {
     const body = input.body.trim();
@@ -129,7 +147,7 @@ export const jarvisChatService = {
       title: "Jarvis"
     });
 
-    await database.appendChatMessage({
+    const inbound = await database.appendChatMessage({
       conversation_id: conversation.id,
       direction: "inbound",
       role: "user",
@@ -140,6 +158,38 @@ export const jarvisChatService = {
         ...(input.payload ?? {})
       }
     });
+
+    if (
+      shouldQueueCodexCasualReply({
+        body,
+        channelKind: input.channelKind,
+        conversation,
+        keyword
+      })
+    ) {
+      const job = await jarvisCodexChatService.queueReply({
+        conversationId: conversation.id,
+        inboundMessageId: inbound.id
+      });
+
+      await auditLog.log({
+        event_type: "jarvis.chat_handled",
+        payload: {
+          channel_kind: input.channelKind,
+          conversation_id: conversation.id,
+          intent: "queued_casual_reply",
+          jarvis_chat_reply_job_id: job.id
+        }
+      });
+
+      return {
+        conversation,
+        intent: "queued_casual_reply",
+        reply: "",
+        casualReplyJobId: job.id,
+        messages: await jarvisChatService.listMessages()
+      };
+    }
 
     const dispatch = await routeMessage({
       body,

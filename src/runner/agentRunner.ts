@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import { promisify } from "node:util";
 import { auditLog } from "../modules/audit-log/auditLogService.js";
 import { executionEngine } from "../modules/execution-engine/executionEngine.js";
+import { jarvisCodexChatService } from "../modules/jarvis-chat/jarvisCodexChatService.js";
 import { jarvisChatNotifier } from "../modules/jarvis-chat/jarvisChatNotifier.js";
 import {
   checkDatabaseConnection,
@@ -51,6 +52,16 @@ const main = async (): Promise<void> => {
 
   while (!stopping) {
     try {
+      if (jarvisCodexChatService.isEnabled()) {
+        const processedChatReply = await jarvisCodexChatService.processNext({
+          runnerId
+        });
+
+        if (processedChatReply) {
+          continue;
+        }
+      }
+
       const claimed = await database.claimNextQueuedTask("codex_local", taskScope, {
         allowDesktopControl: desktopControlEnabled || fullComputerControlEnabled,
         allowFullComputerControl: fullComputerControlEnabled

@@ -16,6 +16,8 @@ import type {
   DeveloperTaskRecord,
   ExecutionRunRecord,
   ExecutorKind,
+  JarvisChatReplyJobRecord,
+  JarvisChatReplyJobStatus,
   MemoryRecord,
   PermissionLevel,
   RepoRecord,
@@ -125,6 +127,12 @@ type ChatMessageInput = {
   payload?: JsonRecord;
 };
 
+type JarvisChatReplyJobInput = {
+  conversation_id: string;
+  inbound_message_id: string;
+  expires_at: string;
+};
+
 type InMemoryStore = {
   auditEvents: AuditEventRecord[];
   chatChannels: ChatChannelRecord[];
@@ -135,6 +143,7 @@ type InMemoryStore = {
   confirmations: ConfirmationRequestRecord[];
   desktopSnapshots: DesktopSnapshotRecord[];
   executionRuns: ExecutionRunRecord[];
+  jarvisChatReplyJobs: JarvisChatReplyJobRecord[];
   memories: MemoryRecord[];
   repos: RepoRecord[];
   repoAliases: Array<{ id: string; repo_id: string; alias: string }>;
@@ -171,6 +180,7 @@ const memoryStore: InMemoryStore = {
   confirmations: [],
   desktopSnapshots: [],
   executionRuns: [],
+  jarvisChatReplyJobs: [],
   memories: [],
   repos: [],
   repoAliases: [],
@@ -638,6 +648,215 @@ export const database = {
     }
 
     return origins;
+  },
+
+  async createJarvisChatReplyJob(
+    input: JarvisChatReplyJobInput
+  ): Promise<JarvisChatReplyJobRecord> {
+    if (db) {
+      return queryRequired<JarvisChatReplyJobRecord>(
+        `insert into jarvis_chat_reply_jobs (
+           conversation_id, inbound_message_id, expires_at
+         )
+         values ($1, $2, $3)
+         on conflict (inbound_message_id) do update
+           set expires_at = excluded.expires_at,
+               status = case
+                 when jarvis_chat_reply_jobs.status in ('failed', 'expired')
+                   then 'queued'
+                 else jarvis_chat_reply_jobs.status
+               end,
+               error = null
+         returning *`,
+        [input.conversation_id, input.inbound_message_id, input.expires_at],
+        "create Jarvis chat reply job"
+      );
+    }
+
+    const existing = memoryStore.jarvisChatReplyJobs.find(
+      (job) => job.inbound_message_id === input.inbound_message_id
+    );
+
+    if (existing) {
+      existing.expires_at = input.expires_at;
+      if (existing.status === "failed" || existing.status === "expired") {
+        existing.status = "queued";
+        existing.error = null;
+      }
+      existing.updated_at = now();
+      return existing;
+    }
+
+    const timestamp = now();
+    const job: JarvisChatReplyJobRecord = {
+      id: randomUUID(),
+      conversation_id: input.conversation_id,
+      inbound_message_id: input.inbound_message_id,
+      status: "queued",
+      worker_id: null,
+      claimed_at: null,
+      completed_at: null,
+      expires_at: input.expires_at,
+      reply_body: null,
+      error: null,
+      created_at: timestamp,
+      updated_at: timestamp
+    };
+    memoryStore.jarvisChatReplyJobs.unshift(job);
+    return job;
+  },
+
+  async claimNextJarvisChatReplyJob(
+    workerId: string,
+    timeoutMs: number
+  ): Promise<JarvisChatReplyJobRecord | null> {
+    if (db) {
+      const client = await db.connect();
+
+      try {
+        await client.query("begin");
+        const job = await queryOne<JarvisChatReplyJobRecord>(
+          `select * from jarvis_chat_reply_jobs
+           where status = 'queued'
+           order by created_at asc
+           for update skip locked
+           limit 1`,
+          [],
+          "claim Jarvis chat reply job lookup",
+          client
+        );
+
+        if (!job) {
+          await client.query("commit");
+          return null;
+        }
+
+        const claimed = await queryRequired<JarvisChatReplyJobRecord>(
+          `update jarvis_chat_reply_jobs
+           set status = 'running',
+               worker_id = $2,
+               claimed_at = now(),
+               expires_at = now() + ($3 * interval '1 millisecond')
+           where id = $1
+           returning *`,
+          [job.id, workerId, timeoutMs],
+          "claim Jarvis chat reply job",
+          client
+        );
+
+        await client.query("commit");
+        return claimed;
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    const job = memoryStore.jarvisChatReplyJobs
+      .slice()
+      .reverse()
+      .find((item) => item.status === "queued");
+
+    if (!job) {
+      return null;
+    }
+
+    job.status = "running";
+    job.worker_id = workerId;
+    job.claimed_at = now();
+    job.expires_at = new Date(Date.now() + timeoutMs).toISOString();
+    job.updated_at = now();
+    return job;
+  },
+
+  async finishJarvisChatReplyJob(
+    jobId: string,
+    input: {
+      status: Extract<JarvisChatReplyJobStatus, "succeeded" | "failed" | "expired">;
+      reply_body?: string | null;
+      error?: string | null;
+    }
+  ): Promise<JarvisChatReplyJobRecord> {
+    if (db) {
+      return queryRequired<JarvisChatReplyJobRecord>(
+        `update jarvis_chat_reply_jobs
+         set status = $2,
+             completed_at = now(),
+             reply_body = $3,
+             error = $4
+         where id = $1
+         returning *`,
+        [
+          jobId,
+          input.status,
+          input.reply_body ?? null,
+          input.error ?? null
+        ],
+        "finish Jarvis chat reply job"
+      );
+    }
+
+    const job = memoryStore.jarvisChatReplyJobs.find((item) => item.id === jobId);
+
+    if (!job) {
+      throw new Error(`Jarvis chat reply job not found: ${jobId}`);
+    }
+
+    job.status = input.status;
+    job.completed_at = now();
+    job.reply_body = input.reply_body ?? null;
+    job.error = input.error ?? null;
+    job.updated_at = now();
+    return job;
+  },
+
+  async expireJarvisChatReplyJobs(
+    reason = "Jarvis Codex reply timed out."
+  ): Promise<JarvisChatReplyJobRecord[]> {
+    if (db) {
+      return queryMany<JarvisChatReplyJobRecord>(
+        `update jarvis_chat_reply_jobs
+         set status = 'expired',
+             completed_at = now(),
+             error = coalesce(error, $1)
+         where status in ('queued', 'running')
+           and expires_at < now()
+         returning *`,
+        [reason],
+        "expire Jarvis chat reply jobs"
+      );
+    }
+
+    const timestamp = Date.now();
+    const expired = memoryStore.jarvisChatReplyJobs.filter(
+      (job) =>
+        (job.status === "queued" || job.status === "running") &&
+        Date.parse(job.expires_at) < timestamp
+    );
+
+    for (const job of expired) {
+      job.status = "expired";
+      job.completed_at = now();
+      job.error = job.error ?? reason;
+      job.updated_at = now();
+    }
+
+    return expired;
+  },
+
+  async listJarvisChatReplyJobs(): Promise<JarvisChatReplyJobRecord[]> {
+    if (db) {
+      return queryMany<JarvisChatReplyJobRecord>(
+        `select * from jarvis_chat_reply_jobs
+         order by created_at desc`,
+        [],
+        "list Jarvis chat reply jobs"
+      );
+    }
+
+    return [...memoryStore.jarvisChatReplyJobs];
   },
 
   async upsertSmsConversation(

@@ -8,6 +8,7 @@ process.env.OPENAI_API_KEY = "sk-invalid-runtime-should-not-be-used";
 process.env.TELEGRAM_BOT_TOKEN = "";
 process.env.TELEGRAM_OWNER_USER_ID = "12345";
 process.env.TELEGRAM_WEBHOOK_SECRET = "telegram-secret";
+process.env.JARVIS_CODEX_CHAT_ENABLED = "true";
 process.env.VAPI_PUBLIC_KEY = "public-test-key";
 process.env.VAPI_ASSISTANT_ID = "assistant-test-id";
 process.env.VAPI_ASSISTANT_NAME = "Jarvis Test";
@@ -20,6 +21,9 @@ const { jarvisChatNotifier } = await import(
   "./modules/jarvis-chat/jarvisChatNotifier.js"
 );
 const { telegramService } = await import("./modules/telegram/telegramService.js");
+const { jarvisCodexChatService } = await import(
+  "./modules/jarvis-chat/jarvisCodexChatService.js"
+);
 const {
   classifyComputerInstructionRisk,
   classifyShellCommandRisk,
@@ -406,6 +410,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     });
 
     const beforeOwnerTasks = await taskCount();
+    const beforeOwnerReplyJobs = (await database.listJarvisChatReplyJobs()).length;
     const accepted = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(telegramUpdate(12345, 67890, "hello", 42)),
       headers: {
@@ -419,12 +424,13 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     assert.equal(acceptedPayload.success, true);
     assert.equal(acceptedPayload.accepted, true);
     assert.equal(acceptedPayload.task_id, null);
-    assert.match(acceptedPayload.reply, /Online|Jarvis/i);
+    assert.equal(acceptedPayload.reply, "");
+    assert.ok(acceptedPayload.queued_reply_job_id);
     assert.equal(await taskCount(), beforeOwnerTasks);
 
-    const control = await fetch(`${baseUrl}/telegram/webhook`, {
+    const contextQuestion = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(
-        telegramUpdate(12345, 67890, "can you control my computer?", 43)
+        telegramUpdate(12345, 67890, "what context do you have on me", 43)
       ),
       headers: {
         "Content-Type": "application/json",
@@ -432,17 +438,53 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
       },
       method: "POST"
     });
-    assert.equal(control.status, 200);
-    const controlPayload = await control.json();
-    assert.equal(controlPayload.success, true);
-    assert.equal(controlPayload.accepted, true);
-    assert.equal(controlPayload.task_id, null);
-    assert.match(controlPayload.reply, /Mac local bridge|safe shell/i);
+    assert.equal(contextQuestion.status, 200);
+    const contextPayload = await contextQuestion.json();
+    assert.equal(contextPayload.success, true);
+    assert.equal(contextPayload.accepted, true);
+    assert.equal(contextPayload.task_id, null);
+    assert.equal(contextPayload.reply, "");
+    assert.ok(contextPayload.queued_reply_job_id);
+
+    const joke = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(12345, 67890, "tell me a joke", 44)),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(joke.status, 200);
+    const jokePayload = await joke.json();
+    assert.equal(jokePayload.success, true);
+    assert.equal(jokePayload.accepted, true);
+    assert.equal(jokePayload.task_id, null);
+    assert.equal(jokePayload.reply, "");
+    assert.ok(jokePayload.queued_reply_job_id);
+
+    assert.equal(
+      (await database.listJarvisChatReplyJobs()).length,
+      beforeOwnerReplyJobs + 3
+    );
     assert.equal(await taskCount(), beforeOwnerTasks);
+
+    let processedReplies = 0;
+    while (
+      await jarvisCodexChatService.processNext({
+        runnerId: "test-jarvis-chat",
+        generateReply: async ({ inboundMessage }) => {
+          processedReplies += 1;
+          return `Jarvis reply to: ${inboundMessage.body}`;
+        }
+      })
+    ) {
+      // Drain queued casual replies one at a time, just like the local bridge.
+    }
+    assert.equal(processedReplies, 3);
 
     const finderRequest = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(
-        telegramUpdate(12345, 67890, "open Finder and show my Downloads", 44)
+        telegramUpdate(12345, 67890, "open Finder and show my Downloads", 45)
       ),
       headers: {
         "Content-Type": "application/json",
@@ -460,7 +502,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
 
     const finderTaskRequest = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(
-        telegramUpdate(12345, 67890, "task open Finder and show my Downloads", 45)
+        telegramUpdate(12345, 67890, "task open Finder and show my Downloads", 46)
       ),
       headers: {
         "Content-Type": "application/json",
@@ -539,9 +581,28 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     const repoTaskPayload = await repoTask.json();
     assert.ok(repoTaskPayload.task_id);
 
+    const beforeStatusReplyJobs = (await database.listJarvisChatReplyJobs()).length;
+    const statusRequest = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(telegramUpdate(12345, 67890, "status", 50)),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(statusRequest.status, 200);
+    const statusPayload = await statusRequest.json();
+    assert.equal(statusPayload.accepted, true);
+    assert.equal(statusPayload.queued_reply_job_id, null);
+    assert.match(statusPayload.reply, /Task/i);
+    assert.equal(
+      (await database.listJarvisChatReplyJobs()).length,
+      beforeStatusReplyJobs
+    );
+
     const riskyRequest = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(
-        telegramUpdate(12345, 67890, "task Open Mail and send this email to the team", 50)
+        telegramUpdate(12345, 67890, "task Open Mail and send this email to the team", 51)
       ),
       headers: {
         "Content-Type": "application/json",
@@ -594,7 +655,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
 
     const denyRequest = await fetch(`${baseUrl}/telegram/webhook`, {
       body: JSON.stringify(
-        telegramUpdate(12345, 67890, "task Open Mail and send this email to support", 51)
+        telegramUpdate(12345, 67890, "task Open Mail and send this email to support", 52)
       ),
       headers: {
         "Content-Type": "application/json",
@@ -641,7 +702,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
       sharedMessages.some(
         (message) =>
           message.role === "assistant" &&
-          /Mac local bridge|local bridge|safe shell/i.test(message.body)
+          /Jarvis reply to: what context do you have on me/i.test(message.body)
       )
     );
     assert.ok(
@@ -652,6 +713,69 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
       )
     );
   });
+});
+
+test("Codex-backed Jarvis chat reply jobs expire with one fallback", async () => {
+  const channel = await database.upsertChatChannel({
+    kind: "telegram",
+    external_id: "expire-chat",
+    display_name: "Telegram Expire Test"
+  });
+  const conversation = await database.upsertChatConversation({
+    channel_id: channel.id,
+    title: "Jarvis"
+  });
+  const inbound = await database.appendChatMessage({
+    conversation_id: conversation.id,
+    direction: "inbound",
+    role: "user",
+    body: "tell me something alive",
+    provider_message_id: "expire-1"
+  });
+  const job = await database.createJarvisChatReplyJob({
+    conversation_id: conversation.id,
+    inbound_message_id: inbound.id,
+    expires_at: new Date(Date.now() - 1000).toISOString()
+  });
+
+  const processed = await jarvisCodexChatService.processNext({
+    runnerId: "test-expire",
+    generateReply: async () => {
+      throw new Error("should not claim expired jobs");
+    }
+  });
+  assert.equal(processed, false);
+
+  const expired = (await database.listJarvisChatReplyJobs()).find(
+    (item) => item.id === job.id
+  );
+  assert.equal(expired?.status, "expired");
+
+  const messagesAfterFirstPass = await database.listChatMessages({
+    conversation_id: conversation.id,
+    limit: 20
+  });
+  assert.equal(
+    messagesAfterFirstPass.filter((message) =>
+      /snag generating the sharper reply/i.test(message.body)
+    ).length,
+    1
+  );
+
+  await jarvisCodexChatService.processNext({
+    runnerId: "test-expire",
+    generateReply: async () => "unused"
+  });
+  const messagesAfterSecondPass = await database.listChatMessages({
+    conversation_id: conversation.id,
+    limit: 20
+  });
+  assert.equal(
+    messagesAfterSecondPass.filter((message) =>
+      /snag generating the sharper reply/i.test(message.body)
+    ).length,
+    1
+  );
 });
 
 test("sms chat delegates message interpretation to the shared Jarvis service", async () => {

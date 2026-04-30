@@ -59,17 +59,20 @@ telegramRouter.post("/telegram/webhook", async (request, response, next) => {
 
       await telegramService.answerCallbackQuery(
         String(callback.callbackId),
-        result.reply
+        result.reply || "Queued for Jarvis."
       );
-      await telegramService.sendMessage(String(callback.chatId), result.reply, {
-        ...(result.confirmationId
-          ? { replyMarkup: telegramService.approvalReplyMarkup(result.confirmationId) }
-          : {})
-      });
+      if (result.reply) {
+        await telegramService.sendMessage(String(callback.chatId), result.reply, {
+          ...(result.confirmationId
+            ? { replyMarkup: telegramService.approvalReplyMarkup(result.confirmationId) }
+            : {})
+        });
+      }
       response.json({
         success: true,
         accepted: true,
         reply: result.reply,
+        queued_reply_job_id: result.casualReplyJobId ?? null,
         task_id: result.taskId ?? null,
         confirmation_id: result.confirmationId ?? null
       });
@@ -109,15 +112,18 @@ telegramRouter.post("/telegram/webhook", async (request, response, next) => {
       }
     });
 
-    await telegramService.sendMessage(String(message.chatId), result.reply, {
-      ...(result.confirmationId
-        ? { replyMarkup: telegramService.approvalReplyMarkup(result.confirmationId) }
-        : {})
-    });
+    if (result.reply) {
+      await telegramService.sendMessage(String(message.chatId), result.reply, {
+        ...(result.confirmationId
+          ? { replyMarkup: telegramService.approvalReplyMarkup(result.confirmationId) }
+          : {})
+      });
+    }
     response.json({
       success: true,
       accepted: true,
       reply: result.reply,
+      queued_reply_job_id: result.casualReplyJobId ?? null,
       confirmation_id: result.confirmationId ?? null,
       task_id: result.taskId ?? null
     });
