@@ -262,7 +262,7 @@ const sanitizeCodexReply = (value: string): string => {
 };
 
 const fallbackReply = (): string =>
-  "I hit a snag generating the sharper reply. I’m still here; talk normally, or start with `task` when you want me to act.";
+  "I hit a snag generating the sharper reply. I'm still here; talk normally, or start with `task` when you want me to act.";
 
 const positiveInteger = (value: string | undefined): number | null => {
   if (!value) {
