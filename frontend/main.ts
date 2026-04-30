@@ -972,14 +972,13 @@ const renderDashboard = (): string => `
         <span>${escapeHtml(state.config?.assistantName ?? "Developer operator")}</span>
       </div>
 
-      <form id="task-form" class="command-form">
-        <label for="command-input">Command</label>
-        <textarea id="command-input" name="utterance" rows="2" placeholder="Give Jarvis concrete work: inspect a repo, run checks, use safe Chrome control, check status, or continue a task.">${escapeHtml(state.taskDraft)}</textarea>
-        <div class="command-row">
-          <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / current project / Chrome" />
-          <button class="primary" type="submit">Queue</button>
+      <section class="header-status" aria-label="Current Jarvis state">
+        <span class="status-chip ${state.muted ? "muted" : ""}">${escapeHtml(formatStatus(state.status))}</span>
+        <div>
+          <strong>${escapeHtml(primaryRuntimeStatus())}</strong>
+          <p>${escapeHtml(state.statusDetail)}</p>
         </div>
-      </form>
+      </section>
 
       <section class="channel-controls" aria-label="Voice and call controls">
         <div class="control-row">
@@ -1003,19 +1002,7 @@ const renderDashboard = (): string => `
 
     ${state.error ? `<div class="notice error-text">${escapeHtml(state.error)}</div>` : ""}
 
-    <nav class="tab-strip" aria-label="Jarvis dashboard tabs">
-      ${renderTabButton("mission", "Mission Control")}
-      ${renderTabButton("chat", "Chat")}
-      ${renderTabButton("sms", "SMS/Health")}
-    </nav>
-
-    ${
-      state.activeTab === "chat"
-        ? renderChatTab()
-        : state.activeTab === "sms"
-          ? renderSmsHealthTab()
-          : renderMissionTab()
-    }
+    ${renderOperatorSections()}
   </main>
 `;
 
@@ -1109,6 +1096,136 @@ const renderMissionTab = (): string => `
       ${renderMobileApprovalButtons()}
     </nav>
 `;
+
+const renderOperatorSections = (): string => `
+  <section class="operator-sections" aria-label="Jarvis chat and backend configuration">
+    ${renderChatSection()}
+    ${renderBackendConfigSection()}
+  </section>
+`;
+
+const renderChatSection = (): string => `
+  <section class="panel chat-panel operator-chat-section" aria-label="Jarvis chat">
+    <div class="panel-heading">
+      <div>
+        <p class="section-label">Jarvis Chat</p>
+        <h2>Talk to the operator</h2>
+      </div>
+      <span>${state.chatMessages.length} messages</span>
+    </div>
+    <div class="chat-thread" aria-live="polite">
+      ${
+        state.chatMessages.length
+          ? state.chatMessages.map(renderChatMessage).join("")
+          : '<p class="empty">Ask Jarvis a question, check status, approve work, or queue real Mac/repo tasks from here.</p>'
+      }
+    </div>
+    <form id="chat-form" class="chat-form">
+      <textarea name="message" rows="3" placeholder="Message Jarvis: open Finder, run ls on Desktop, inspect the repo, check status, approve, deny, or continue a task.">${escapeHtml(state.chatDraft)}</textarea>
+      <div class="chat-form-row">
+        <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Mac / Chrome" />
+        <button class="primary" type="submit" ${state.chatBusy ? "disabled" : ""}>Send</button>
+      </div>
+    </form>
+    <section class="chat-quick-strip" aria-label="Common Jarvis prompts">
+      ${quickTasks
+        .map(
+          (task, index) =>
+            `<button class="quick-action" data-quick-task="${index}">${escapeHtml(task.label)}</button>`
+        )
+        .join("")}
+    </section>
+  </section>
+`;
+
+const renderBackendConfigSection = (): string => `
+  <section class="backend-config-section" aria-label="Backend configuration">
+    <section class="panel backend-config-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="section-label">Backend Configuration</p>
+          <h2>Current runtime wiring</h2>
+        </div>
+        <span>${escapeHtml(lastActivityLabel())}</span>
+      </div>
+      <section class="system-strip backend-system-strip" aria-label="Backend status cards">
+        ${renderSystemPill("VOICE", formatStatus(state.status), state.statusDetail, statusTone(state.status))}
+        ${renderSystemPill("SMS", smsStatusLabel(), smsStatusDetail(), smsTone())}
+        ${renderSystemPill("VAPI", shortId(state.config?.assistantId ?? ""), state.config?.backendUrl ?? "", state.vapi ? "ok" : "warn")}
+        ${renderSystemPill("CODEX CHAT", codexThreadStatusLabel(), codexThreadStatusDetail(), codexThreadTone())}
+        ${renderSystemPill("LOCAL BRIDGE", runnerStatusLabel(), runnerStatusDetail(), runnerTone())}
+        ${renderSystemPill("RAILWAY DB", databaseStatusLabel(), databaseStatusDetail(), databaseTone())}
+        ${renderSystemPill("APPROVALS", `${state.confirmations.length} pending`, approvalDetail(), state.confirmations.length ? "warn" : "ok")}
+      </section>
+      ${renderConfigSnapshot()}
+      ${renderAttentionBanner()}
+    </section>
+
+    <section class="backend-lower-grid">
+      <section class="panel queue-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">Current Work</p>
+            <h2>${openWorkCount()} active / ${state.tasks.length} recent</h2>
+          </div>
+          <span>${escapeHtml(lastActivityLabel())}</span>
+        </div>
+        ${renderTaskGroups()}
+      </section>
+
+      <section class="panel approvals-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">Human Gate</p>
+            <h2>Approvals</h2>
+          </div>
+          <span>${state.confirmations.length} pending</span>
+        </div>
+        <div class="approval-list">
+          ${
+            state.confirmations.length
+              ? state.confirmations.map(renderConfirmation).join("")
+              : '<p class="empty">No pending approvals.</p>'
+          }
+        </div>
+      </section>
+    </section>
+
+    <section class="backend-lower-grid">
+      <section class="panel detail-panel">
+        ${renderTaskDetail()}
+      </section>
+      <section class="panel desktop-panel">
+        ${renderDesktopPreview()}
+      </section>
+    </section>
+  </section>
+`;
+
+const renderConfigSnapshot = (): string => {
+  const config = state.config;
+  const overview = state.overview;
+  const sms = state.smsHealth?.summary;
+  const codex = overview?.codex_thread;
+  const runner = overview?.runner;
+
+  return `
+    <dl class="backend-config-grid">
+      <div><dt>Backend URL</dt><dd>${escapeHtml(config?.backendUrl ?? "Unknown")}</dd></div>
+      <div><dt>Assistant</dt><dd>${escapeHtml(config?.assistantName ?? "Unknown")} · ${escapeHtml(shortId(config?.assistantId ?? ""))}</dd></div>
+      <div><dt>Browser Voice</dt><dd>${escapeHtml(state.vapi ? "Vapi web client initialized" : "Vapi web client unavailable")}</dd></div>
+      <div><dt>SMS Route</dt><dd>...${escapeHtml(sms?.fromNumberTail ?? state.config?.sms.fromNumberTail ?? "----")} -> ...${escapeHtml(sms?.ownerPhoneTail ?? state.config?.sms.ownerPhoneTail ?? "----")}</dd></div>
+      <div><dt>SMS Delivery</dt><dd>${escapeHtml(formatLabel(sms?.deliveryState ?? "unknown"))}</dd></div>
+      <div><dt>SMS Verification</dt><dd>${escapeHtml(formatLabel(sms?.verificationState ?? "unknown"))}</dd></div>
+      <div><dt>Codex Thread Bridge</dt><dd>${escapeHtml(codex?.enabled ? codex.status : "disabled")}</dd></div>
+      <div><dt>Codex Waiting</dt><dd>${escapeHtml(String(codex?.waiting_count ?? 0))}</dd></div>
+      <div><dt>Local Bridge Runner</dt><dd>${escapeHtml(runner?.runner_id ?? "No recent runner id")}</dd></div>
+      <div><dt>Runner Scope</dt><dd>${escapeHtml(runner?.task_scope ? formatLabel(runner.task_scope) : "Unknown")}</dd></div>
+      <div><dt>Database</dt><dd>${escapeHtml(overview?.database.message ?? "Not loaded")}</dd></div>
+      <div><dt>Last Activity</dt><dd>${escapeHtml(lastActivityLabel())}</dd></div>
+    </dl>
+  `;
+};
 
 const renderChatTab = (): string => `
   <section class="chat-layout">
@@ -1873,6 +1990,27 @@ const approvalDetail = (): string => {
   }
 
   return "Review before commit, push, PR, or higher-risk work proceeds.";
+};
+
+const primaryRuntimeStatus = (): string => {
+  const queuedRunner = state.tasks.filter(
+    (task) => task.status === "queued" && task.execution_target === "runner"
+  ).length;
+  const queuedCodex = state.overview?.codex_thread.waiting_count ?? 0;
+
+  if (state.confirmations.length) {
+    return `${state.confirmations.length} approval${state.confirmations.length === 1 ? "" : "s"} waiting`;
+  }
+
+  if (state.tasks.some((task) => task.status === "running")) {
+    return "Jarvis is actively working";
+  }
+
+  if (queuedRunner || queuedCodex) {
+    return `${queuedRunner + queuedCodex} queued task${queuedRunner + queuedCodex === 1 ? "" : "s"}`;
+  }
+
+  return "Ready for Telegram, website chat, SMS, and local bridge work";
 };
 
 const lastActivityLabel = (): string => {

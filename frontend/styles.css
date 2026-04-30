@@ -191,7 +191,7 @@ code,
   top: 10px;
   z-index: 20;
   display: grid;
-  grid-template-columns: 190px minmax(360px, 1fr) minmax(300px, 420px) auto;
+  grid-template-columns: 190px minmax(300px, 1fr) minmax(300px, 420px) auto;
   gap: 12px;
   align-items: stretch;
   padding: 12px;
@@ -204,6 +204,30 @@ code,
 
 .brand-block span {
   color: #9fb0b8;
+  font-size: 0.82rem;
+}
+
+.header-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+  min-height: 100%;
+  border: 1px solid rgba(171, 190, 198, 0.12);
+  border-radius: 6px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.header-status strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #f6fbfc;
+}
+
+.header-status p {
+  margin: 3px 0 0;
+  color: #aebdc4;
   font-size: 0.82rem;
 }
 
@@ -947,6 +971,64 @@ pre {
   gap: 8px;
 }
 
+.operator-sections {
+  display: grid;
+  grid-template-columns: minmax(420px, 0.95fr) minmax(520px, 1.05fr);
+  gap: 12px;
+  align-items: start;
+  margin-top: 12px;
+}
+
+.operator-chat-section {
+  position: sticky;
+  top: 138px;
+  min-height: calc(100vh - 158px);
+}
+
+.operator-chat-section .chat-thread {
+  min-height: calc(100vh - 390px);
+  max-height: calc(100vh - 320px);
+}
+
+.chat-quick-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.backend-config-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.backend-config-panel {
+  overflow: hidden;
+}
+
+.backend-system-strip {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.backend-config-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 13px;
+  border-top: 1px solid rgba(171, 190, 198, 0.12);
+  padding-top: 13px;
+}
+
+.backend-config-grid dd {
+  font-size: 0.86rem;
+}
+
+.backend-lower-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.82fr);
+  gap: 12px;
+  align-items: start;
+}
+
 @media (max-width: 1320px) {
   .command-bar {
     grid-template-columns: 170px minmax(320px, 1fr) minmax(280px, 380px);
@@ -963,8 +1045,19 @@ pre {
 
   .mission-grid,
   .chat-layout,
-  .sms-health-layout {
+  .sms-health-layout,
+  .operator-sections {
     grid-template-columns: minmax(300px, 0.8fr) minmax(420px, 1fr);
+  }
+
+  .operator-chat-section {
+    position: static;
+    min-height: 0;
+  }
+
+  .operator-chat-section .chat-thread {
+    min-height: 48vh;
+    max-height: 58vh;
   }
 
   .right-rail {
@@ -1010,16 +1103,22 @@ pre {
   .outbound-form,
   .login-row,
   .detail-grid,
+  .backend-config-grid,
+  .backend-lower-grid,
   .sms-summary-grid,
   .preview-meta,
   .audit-row,
   .log-entry,
   .right-rail,
   .mission-grid,
+  .operator-sections,
   .chat-layout,
   .sms-health-layout,
   .chat-form-row,
+  .header-status,
   .system-strip,
+  .backend-system-strip,
+  .chat-quick-strip,
   .quick-strip {
     grid-template-columns: 1fr;
   }
