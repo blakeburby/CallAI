@@ -134,6 +134,36 @@ export const completeJson = async <T>(input: {
   return JSON.parse(content) as T;
 };
 
+export const completeText = async (input: {
+  model?: string;
+  system: string;
+  user: string;
+  maxTokens?: number;
+}): Promise<string | null> => {
+  const openai = getOpenAIClient();
+
+  if (!openai) {
+    return null;
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: input.model ?? process.env.JARVIS_CHAT_REPLY_MODEL ?? "gpt-4o-mini",
+    max_tokens: input.maxTokens ?? 350,
+    messages: [
+      {
+        role: "system",
+        content: input.system
+      },
+      {
+        role: "user",
+        content: input.user
+      }
+    ]
+  });
+
+  return completion.choices[0]?.message?.content?.trim() || null;
+};
+
 const fallbackSummary = (toolName: string, data: unknown): string => {
   if (toolName === "create_task") {
     const record = asRecord(data);

@@ -126,21 +126,39 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
     const unauthenticated = await fetch(`${baseUrl}/operator/chat/messages`);
     assert.equal(unauthenticated.status, 401);
 
-    const beforeHelloTasks = await taskCount();
-    const hello = await fetch(`${baseUrl}/operator/chat/messages`, {
-      body: JSON.stringify({ message: "hello" }),
-      headers: {
-        "Content-Type": "application/json",
-        cookie
+    const beforeCasualTasks = await taskCount();
+    const casualChecks = [
+      {
+        message: "hello",
+        pattern: /Jarvis|task queue/i
       },
-      method: "POST"
-    });
-    assert.equal(hello.status, 200);
-    const helloPayload = await hello.json();
-    assert.equal(helloPayload.success, true);
-    assert.equal(helloPayload.data.task_id, null);
-    assert.match(helloPayload.data.reply, /Online|Jarvis/i);
-    assert.equal(await taskCount(), beforeHelloTasks);
+      {
+        message: "what's your name",
+        pattern: /Jarvis|engineering intelligence/i
+      },
+      {
+        message: "can you control my computer?",
+        pattern: /safe Chrome|local-bridge|full arbitrary desktop/i
+      }
+    ];
+
+    for (const check of casualChecks) {
+      const response = await fetch(`${baseUrl}/operator/chat/messages`, {
+        body: JSON.stringify({ message: check.message }),
+        headers: {
+          "Content-Type": "application/json",
+          cookie
+        },
+        method: "POST"
+      });
+      assert.equal(response.status, 200);
+      const payload = await response.json();
+      assert.equal(payload.success, true);
+      assert.equal(payload.data.task_id, null);
+      assert.match(payload.data.reply, check.pattern);
+    }
+
+    assert.equal(await taskCount(), beforeCasualTasks);
 
     const task = await fetch(`${baseUrl}/operator/chat/messages`, {
       body: JSON.stringify({
@@ -159,7 +177,7 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
 
     const taskRecord = await database.getTask(taskPayload.data.task_id);
     assert.ok(taskRecord);
-    assert.equal(await taskCount(), beforeHelloTasks + 1);
+    assert.equal(await taskCount(), beforeCasualTasks + 1);
 
     assert.ok(
       taskPayload.data.messages.some(
@@ -232,7 +250,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
 
     const beforeOwnerTasks = await taskCount();
     const accepted = await fetch(`${baseUrl}/telegram/webhook`, {
-      body: JSON.stringify(telegramUpdate(12345, 67890, "hello")),
+      body: JSON.stringify(telegramUpdate(12345, 67890, "hello", 42)),
       headers: {
         "Content-Type": "application/json",
         "x-telegram-bot-api-secret-token": "telegram-secret"
@@ -248,10 +266,35 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     });
     assert.equal(await taskCount(), beforeOwnerTasks);
 
+    const control = await fetch(`${baseUrl}/telegram/webhook`, {
+      body: JSON.stringify(
+        telegramUpdate(12345, 67890, "can you control my computer?", 43)
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "x-telegram-bot-api-secret-token": "telegram-secret"
+      },
+      method: "POST"
+    });
+    assert.equal(control.status, 200);
+    assert.deepEqual(await control.json(), {
+      success: true,
+      accepted: true,
+      task_id: null
+    });
+    assert.equal(await taskCount(), beforeOwnerTasks);
+
     const sharedMessages = await database.listChatMessages({ limit: 20 });
     assert.ok(
       sharedMessages.some(
         (message) => message.provider_message_id === "42" && message.body === "hello"
+      )
+    );
+    assert.ok(
+      sharedMessages.some(
+        (message) =>
+          message.role === "assistant" &&
+          /safe Chrome|local-bridge|full arbitrary desktop/i.test(message.body)
       )
     );
   });
@@ -300,11 +343,12 @@ test("sms chat delegates message interpretation to the shared Jarvis service", a
 const telegramUpdate = (
   fromId: number,
   chatId: number,
-  text: string
+  text: string,
+  messageId = 42
 ): Record<string, unknown> => ({
   update_id: 1,
   message: {
-    message_id: 42,
+    message_id: messageId,
     from: {
       id: fromId,
       first_name: "Blake",

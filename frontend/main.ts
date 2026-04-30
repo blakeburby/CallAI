@@ -279,6 +279,14 @@ const quickTasks: QuickTask[] = [
     label: "Summarize progress",
     prompt:
       "Summarize the latest CallAI task activity and tell me what still needs my attention."
+  },
+  {
+    label: "What can you do?",
+    prompt: "What can you do as Jarvis, and what still requires approval?"
+  },
+  {
+    label: "Computer control",
+    prompt: "Can you control my computer? Explain the current safe bridge boundary."
   }
 ];
 
@@ -964,7 +972,7 @@ const renderDashboard = (): string => `
 
       <form id="task-form" class="command-form">
         <label for="command-input">Command</label>
-        <textarea id="command-input" name="utterance" rows="2" placeholder="Ask Jarvis to inspect a repo, run checks, control Chrome, check status, or continue work.">${escapeHtml(state.taskDraft)}</textarea>
+        <textarea id="command-input" name="utterance" rows="2" placeholder="Give Jarvis concrete work: inspect a repo, run checks, use safe Chrome control, check status, or continue a task.">${escapeHtml(state.taskDraft)}</textarea>
         <div class="command-row">
           <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / current project / Chrome" />
           <button class="primary" type="submit">Queue</button>
@@ -1114,11 +1122,11 @@ const renderChatTab = (): string => `
         ${
           state.chatMessages.length
             ? state.chatMessages.map(renderChatMessage).join("")
-            : '<p class="empty">Send Jarvis a task, ask for status, or say hello.</p>'
+            : '<p class="empty">Talk to Jarvis here the same way you do in Telegram: ask a question, check status, or queue real work.</p>'
         }
       </div>
       <form id="chat-form" class="chat-form">
-        <textarea name="message" rows="3" placeholder="Ask Jarvis to check status, inspect a repo, edit safely, browse Chrome, or continue a task.">${escapeHtml(state.chatDraft)}</textarea>
+        <textarea name="message" rows="3" placeholder="Ask Jarvis anything, or give it work: check status, inspect a repo, edit safely, browse Chrome, or continue a task.">${escapeHtml(state.chatDraft)}</textarea>
         <div class="chat-form-row">
           <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Chrome" />
           <button class="primary" type="submit" ${state.chatBusy ? "disabled" : ""}>Send</button>
