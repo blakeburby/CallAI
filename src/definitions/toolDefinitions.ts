@@ -4,7 +4,7 @@ export const toolDefinitions = [
     function: {
       name: "create_task",
       description:
-        "Create a remote developer-operator task from the user's spoken request. Use this for repo inspection, edits, tests, Codex delegation, docs updates, bug fixes, project work, and visible Chrome desktop control on Blake's Mac, including navigation, searching, clicking, and routine non-sensitive form filling.",
+        "Create a remote developer-operator task from the user's spoken request. Use this for repo inspection, edits, tests, Codex delegation, docs updates, bug fixes, project work, and local Mac computer control through Blake's bridge, including Chrome, Finder, visible apps, screenshots, safe shell commands, navigation, searching, clicking, typing, and routine non-sensitive form filling.",
       parameters: {
         type: "object",
         properties: {

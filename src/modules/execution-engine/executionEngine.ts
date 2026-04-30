@@ -4,6 +4,7 @@ import { contextMemory } from "../context-memory/contextMemoryService.js";
 import { chatConnector } from "../chat-connector/chatConnector.js";
 import { desktopController } from "../desktop-controller/desktopController.js";
 import { jarvisChatNotifier } from "../jarvis-chat/jarvisChatNotifier.js";
+import { macComputerController } from "../mac-computer-controller/macComputerController.js";
 import { database } from "../../services/dbService.js";
 import type {
   DeveloperTask,
@@ -345,6 +346,7 @@ const executeDesktopControl = async (
   structured: DeveloperTask
 ): Promise<ExecutionResult> => {
   const riskLevel = structured.riskLevel ?? "low";
+  const confirmRisky = process.env.COMPUTER_CONTROL_CONFIRM_RISKY !== "false";
 
   if (riskLevel === "blocked") {
     await auditLog.log({
@@ -354,26 +356,29 @@ const executeDesktopControl = async (
       severity: "warn",
       payload: {
         reason:
-          "The requested website action may involve secrets, credentials, payments, purchases, protected account changes, or CAPTCHA handling.",
+          "The requested computer action may involve secrets, credentials, payments, purchases, protected account changes, or CAPTCHA handling.",
         instructions: structured.instructions
       }
     });
     throw new Error(
-      "Desktop control blocked: this request may involve credentials, secrets, payments, purchases, protected account changes, or CAPTCHA handling."
+      "Computer control blocked: this request may involve credentials, secrets, payments, purchases, protected account changes, or CAPTCHA handling."
     );
   }
 
-  if (riskLevel === "needs_confirmation") {
+  if (riskLevel === "needs_confirmation" && confirmRisky) {
     await requestDesktopControlApproval(task, run, structured);
     return {
       summary:
-        "Desktop control is waiting for approval before taking a sensitive website action.",
+        "Computer control is waiting for approval before taking a sensitive local action.",
       taskStatus: "needs_confirmation",
       notifyCompletion: false
     };
   }
 
-  const result = await desktopController.runChromeTask(task, run, structured);
+  const result =
+    structured.desktopMode === "normal_chrome" || !structured.desktopMode
+      ? await desktopController.runChromeTask(task, run, structured)
+      : await macComputerController.runTask(task, run, structured);
 
   if (result.status === "blocked") {
     throw new Error(result.reason ?? result.summary);
@@ -588,10 +593,10 @@ const requestDesktopControlApproval = async (
   });
   const confirmation = await database.createConfirmation({
     task_id: task.id,
-    prompt: `Approve Jarvis taking the next sensitive website step in Chrome for: ${structured.title}?`,
+    prompt: `Approve Jarvis taking the next sensitive Mac step for: ${structured.title}?`,
     risk:
       reason ??
-      "This may interact with a website in visible Chrome. Jarvis will not enter secrets, solve CAPTCHAs, submit payments, make purchases, or change passwords.",
+      "This may interact with visible apps, local files, shell commands, or websites. Jarvis will not enter secrets, solve CAPTCHAs, submit payments, make purchases, or change passwords.",
     expires_at: new Date(Date.now() + 1000 * 60 * 15).toISOString()
   });
 

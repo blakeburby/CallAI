@@ -57,6 +57,10 @@ npm run build
 npm run local-bridge
 ```
 
+Set `RUNNER_ENABLE_FULL_COMPUTER_CONTROL=true` for Telegram/website tasks that
+need full Mac GUI or local shell control. Without it, the bridge only claims the
+existing normal Chrome desktop tasks.
+
 For local bridge development without a build, use `npm run local-bridge:dev`.
 
 Route queued repo work into this Codex chat:
@@ -160,19 +164,19 @@ It claims queued tasks, logs runner metadata to the audit timeline, creates `cal
 codex exec --json --sandbox workspace-write --cd <repo> <prompt>
 ```
 
-Visible Chrome control also runs through the Mac local bridge. Requests such as
-“open Chrome and go to example.com” are parsed as `desktop_control` tasks. The
-bridge uses Blake's normal Chrome session, opens/focuses the front window,
-requires Chrome's `View > Developer > Allow JavaScript from Apple Events`
-setting, observes page text and controls, and runs a bounded observe-plan-act
-loop for navigation, searching, clicking, typing, selecting, and routine
-non-sensitive form filling. It records `desktop.observe`,
-`desktop.action_planned`, `desktop.action_completed`,
-`desktop.confirmation_required`, and `desktop.blocked` audit events.
-For desktop tasks, the bridge also writes one latest-only `desktop_snapshots`
-record with current URL, page title, latest action, step count, and a compressed
-Chrome preview when the page is not sensitive. Sensitive pages are marked
-redacted and do not store screenshots.
+Visible computer control also runs through the Mac local bridge. Requests such
+as “open Chrome and go to example.com,” “open Finder and show Downloads,” or
+“run ls on Desktop” are parsed as `desktop_control` tasks. Chrome requests keep
+using Blake's normal Chrome session and the bounded observe-plan-act browser
+loop. Full-Mac and shell requests use the local bridge for app focus/opening,
+Finder folders, screenshots, simple keyboard/mouse actions, and safe shell
+commands. It records `desktop.*` events for Chrome work and `computer.*` events
+for full-Mac/shell work.
+
+For desktop tasks, the bridge writes one latest-only `desktop_snapshots` record
+with current state, page/window title, latest action, step count, and a
+compressed preview when the screen is not sensitive. Sensitive pages, apps, and
+shell sessions are marked redacted and do not store screenshots.
 
 Desktop autonomy defaults:
 
@@ -182,14 +186,21 @@ DESKTOP_STEP_TIMEOUT_MS=15000
 DESKTOP_REQUIRE_CHROME_JS_EVENTS=true
 DESKTOP_FAST_AUTONOMY=true
 DESKTOP_CAPTURE_SCREENSHOTS=true
+RUNNER_ENABLE_FULL_COMPUTER_CONTROL=true
+COMPUTER_CONTROL_MAX_STEPS=6
+COMPUTER_CONTROL_SHELL_TIMEOUT_MS=20000
+COMPUTER_CONTROL_STEP_TIMEOUT_MS=15000
+COMPUTER_CONTROL_CONFIRM_RISKY=true
 ```
 
-Fast autonomy applies only to low-risk browser work. The bridge blocks or pauses
-before credentials, secrets, payment or banking flows, purchases, CAPTCHA
-handling, account/security changes, uploads, deletes, or externally visible
-submits unless a confirmation flow explicitly approves the next step. Railway
-workers do not claim desktop tasks unless `RUNNER_ENABLE_DESKTOP_CONTROL=true`
-is set; by default those tasks wait for `macbook-local-bridge`.
+Fast autonomy applies only to low-risk browser/Mac work. The bridge blocks
+passwords, secrets, 2FA, CAPTCHAs, credential harvesting, banking, and payment
+execution. It pauses for approval before external sends, uploads, deletes/trash,
+settings changes, shell commands that change state, commits, pushes, deploys,
+or other admin-like actions. Railway workers do not claim desktop tasks unless
+`RUNNER_ENABLE_DESKTOP_CONTROL=true` is set, and full-Mac/shell tasks require
+`RUNNER_ENABLE_FULL_COMPUTER_CONTROL=true`; by default those tasks wait for
+`macbook-local-bridge`.
 
 Manual preflight:
 

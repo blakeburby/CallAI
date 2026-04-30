@@ -38,12 +38,19 @@ export const taskService = {
     const repoAmbiguityNeedsConfirmation =
       interpreted.action !== "desktop_control" &&
       repoResolution.reason === "ambiguous_repo";
+    const blockedDesktopTask =
+      interpreted.action === "desktop_control" && interpreted.riskLevel === "blocked";
     const needsConfirmation =
-      permissionNeedsApproval ||
-      lowConfidence ||
-      codeActionNeedsTarget ||
-      repoAmbiguityNeedsConfirmation;
-    const taskStatus = needsConfirmation ? "needs_confirmation" : "queued";
+      !blockedDesktopTask &&
+      (permissionNeedsApproval ||
+        lowConfidence ||
+        codeActionNeedsTarget ||
+        repoAmbiguityNeedsConfirmation);
+    const taskStatus = blockedDesktopTask
+      ? "blocked"
+      : needsConfirmation
+        ? "needs_confirmation"
+        : "queued";
     const executionTarget = chooseExecutionTarget(interpreted);
 
     const task = await database.createTask({
@@ -59,7 +66,7 @@ export const taskService = {
       execution_target: executionTarget
     });
 
-    if (executionTarget === "codex_thread") {
+    if (executionTarget === "codex_thread" && task.status === "queued") {
       await database.createCodexThreadJob({
         task_id: task.id,
         thread_label: process.env.CODEX_THREAD_LABEL || "CallAI Codex thread"
@@ -88,7 +95,19 @@ export const taskService = {
 
     let confirmation: ConfirmationRequestRecord | undefined;
 
-    if (needsConfirmation) {
+    if (blockedDesktopTask) {
+      await auditLog.log({
+        task_id: task.id,
+        session_id: sessionId ?? null,
+        event_type: "task.blocked",
+        severity: "warn",
+        payload: {
+          reason:
+            "Computer control request was blocked because it may involve passwords, secrets, 2FA, CAPTCHA, banking, payments, purchases, credential harvesting, or security bypass.",
+          execution_target: executionTarget
+        }
+      });
+    } else if (needsConfirmation) {
       confirmation = await database.createConfirmation({
         task_id: task.id,
         prompt: buildConfirmationPrompt(interpreted, repoResolution.reason),
@@ -321,10 +340,18 @@ const normalizeDesktopTask = (task: DeveloperTask): DeveloperTask => {
     return task;
   }
 
+  const desktopMode = task.desktopMode ?? "normal_chrome";
+
   return {
     ...task,
-    targetApp: task.targetApp ?? "chrome",
-    desktopMode: task.desktopMode ?? "normal_chrome",
+    targetApp:
+      task.targetApp ??
+      (desktopMode === "local_shell"
+        ? "shell"
+        : desktopMode === "normal_chrome"
+          ? "Chrome"
+          : "any"),
+    desktopMode,
     permissionRequired:
       task.permissionRequired === "read_only" ? "safe_write" : task.permissionRequired
   };
@@ -344,7 +371,8 @@ const buildConfirmationPrompt = (
   repoReason: string
 ): string => {
   if (task.action === "desktop_control") {
-    return `Approve Jarvis using visible Chrome on your Mac for: ${task.title}?`;
+    const mode = task.desktopMode === "local_shell" ? "local shell" : "full Mac";
+    return `Approve Jarvis using ${mode} control on your Mac for: ${task.title}?`;
   }
 
   if (repoReason === "ambiguous_repo" || repoReason === "no_repos_configured") {
@@ -364,7 +392,11 @@ const buildConfirmationPrompt = (
 
 const describeRisk = (task: DeveloperTask, repoReason: string): string => {
   if (task.action === "desktop_control") {
-    return "Visible desktop automation can interact with websites. Jarvis will not enter secrets, solve CAPTCHAs, submit payments, make purchases, or change passwords.";
+    if (task.desktopMode === "local_shell") {
+      return "Local shell access can read or change files. Jarvis will not handle secrets, credentials, payments, banking, 2FA, CAPTCHA, or security bypass.";
+    }
+
+    return "Full Mac automation can interact with visible apps. Jarvis will not enter secrets, solve CAPTCHAs, submit payments, make purchases, or change passwords.";
   }
 
   if (repoReason === "ambiguous_repo") {

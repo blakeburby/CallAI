@@ -66,11 +66,13 @@ export type DeveloperTask = {
   instructions: string;
   acceptanceCriteria: string[];
   chatTarget?: string;
-  targetApp?: "chrome";
+  targetApp?: string;
   url?: string;
   riskLevel?: "low" | "needs_confirmation" | "blocked";
-  desktopMode?: "normal_chrome";
+  desktopMode?: "normal_chrome" | "full_mac" | "local_shell";
   desktopApprovalGranted?: boolean;
+  shellCommand?: string;
+  shellCwd?: string;
   confidence: number;
   postApprovalAction?: {
     action: "commit_changes" | "open_pull_request";

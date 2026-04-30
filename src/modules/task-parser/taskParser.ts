@@ -20,11 +20,13 @@ const developerTaskSchema = z
     instructions: z.string().min(3).max(5000),
     acceptanceCriteria: z.array(z.string().min(1).max(280)).min(1).max(8),
     chatTarget: z.string().min(1).max(140).optional(),
-    targetApp: z.literal("chrome").optional(),
+    targetApp: z.string().min(1).max(120).optional(),
     url: z.string().url().optional(),
     riskLevel: z.enum(["low", "needs_confirmation", "blocked"]).optional(),
-    desktopMode: z.literal("normal_chrome").optional(),
+    desktopMode: z.enum(["normal_chrome", "full_mac", "local_shell"]).optional(),
     desktopApprovalGranted: z.boolean().optional(),
+    shellCommand: z.string().min(1).max(1200).optional(),
+    shellCwd: z.string().min(1).max(500).optional(),
     confidence: z.number().min(0).max(1),
     postApprovalAction: z
       .object({
@@ -52,7 +54,7 @@ export const parseDeveloperTask = async (
   try {
     const parsed = await completeJson<unknown>({
       system:
-        "Convert spoken developer operations requests into one DeveloperTask JSON object. Use exactly these actions: inspect_repo, edit_files, run_tests, create_branch, commit_changes, open_pull_request, send_chat_message, summarize_project, query_logs, desktop_control, delegate_to_codex, continue_existing_task. Use desktop_control for opening Chrome, browsing websites, navigating to URLs, web searches, filling routine non-sensitive fields, clicking low-risk controls, or browser tasks. For desktop_control set targetApp to chrome, desktopMode to normal_chrome, set url when obvious, and set riskLevel to low for navigation/search/routine non-sensitive form filling, needs_confirmation for form submits/messages/uploads/account changes, and blocked for password/secret/payment/purchase/admin actions. Use branchPolicy new_branch_required. Mark deleting files, force pushing, merging to main, production deploys, mass rewrites, and environment or secret changes as destructive_admin. Mark commits, pushes, pull requests, and external chat sends as full_write. Mark file edits, test additions, and low-risk desktop control as safe_write. Mark repo inspection, summaries, and logs as read_only. Include practical acceptance criteria and a confidence score from 0 to 1.",
+        "Convert spoken developer operations requests into one DeveloperTask JSON object. Use exactly these actions: inspect_repo, edit_files, run_tests, create_branch, commit_changes, open_pull_request, send_chat_message, summarize_project, query_logs, desktop_control, delegate_to_codex, continue_existing_task. Use desktop_control for local Mac computer control. For browser/Chrome tasks set targetApp to Chrome and desktopMode to normal_chrome. For Finder, Terminal, System Settings, Mail, desktop windows, arbitrary visible apps, app launching, screenshots, clicking, typing, hotkeys, or local GUI work set desktopMode to full_mac and targetApp to the app name or any. For local shell commands set desktopMode to local_shell, targetApp to shell, shellCommand to the exact command, and shellCwd when the user names a folder. Set riskLevel low for app opening, navigation, screenshots, local inspection, read-only shell commands, and routine non-sensitive work; needs_confirmation for external sends/posts, deletes/trash, moving many files, uploads, account/settings changes, commits, pushes, deploys, or admin-like actions; blocked for passwords, secrets, API keys, 2FA, CAPTCHAs, banking, payments, purchases, credential harvesting, or security bypass. Use branchPolicy new_branch_required. Mark deleting files, force pushing, merging to main, production deploys, mass rewrites, and environment or secret changes as destructive_admin. Mark commits, pushes, pull requests, external chat sends, and risky computer actions as full_write. Mark file edits, test additions, safe local shell commands, and low-risk computer control as safe_write. Mark repo inspection, summaries, and logs as read_only. Include practical acceptance criteria and a confidence score from 0 to 1.",
       user: trimmed,
       maxTokens: 800
     });
@@ -77,6 +79,10 @@ const heuristicParse = (utterance: string): DeveloperTask => {
   const title = buildTitle(utterance, action);
   const url = extractUrl(utterance, lower);
   const riskLevel = action === "desktop_control" ? inferDesktopRisk(lower) : undefined;
+  const desktopMode = action === "desktop_control" ? inferDesktopMode(lower) : undefined;
+  const targetApp = action === "desktop_control" ? inferTargetApp(utterance, lower, desktopMode) : undefined;
+  const shellCommand = desktopMode === "local_shell" ? inferShellCommand(utterance) : undefined;
+  const shellCwd = desktopMode === "local_shell" ? inferShellCwd(utterance, lower) : undefined;
 
   return {
     action,
@@ -86,9 +92,10 @@ const heuristicParse = (utterance: string): DeveloperTask => {
     permissionRequired,
     instructions: utterance,
     acceptanceCriteria: buildAcceptanceCriteria(action, lower),
-    ...(action === "desktop_control"
-      ? { targetApp: "chrome" as const, desktopMode: "normal_chrome" as const }
-      : {}),
+    ...(targetApp ? { targetApp } : {}),
+    ...(desktopMode ? { desktopMode } : {}),
+    ...(shellCommand ? { shellCommand } : {}),
+    ...(shellCwd ? { shellCwd } : {}),
     ...(url ? { url } : {}),
     ...(riskLevel ? { riskLevel } : {}),
     confidence: repoAlias ? 0.72 : 0.58
@@ -98,6 +105,9 @@ const heuristicParse = (utterance: string): DeveloperTask => {
 const inferAction = (lower: string): NormalizedAction => {
   if (
     /\b(chrome|browser|website|web site|url|navigate|open\s+(?:a\s+)?(?:site|website|webpage|page)|go to|visit|search (?:for|on|the web)|google|click|fill(?: out)?|type into|select from|web form)\b/.test(
+      lower
+    ) ||
+    /\b(finder|terminal|system settings|settings app|mail|email|messages|notes|calendar|slack|desktop|downloads|documents|applications folder|open app|launch app|focus app|front window|screenshot|screen shot|mouse|keyboard|hotkey|press (?:cmd|command|control|option|shift)|run (?:the )?(?:command|shell)|shell command|execute (?:the )?command|list files|show files|delete files|remove files|trash files|enter (?:my )?password|type (?:my )?password|solve captcha|buy|purchase|checkout)\b/.test(
       lower
     ) ||
     /\b[a-z0-9-]+\.(?:com|org|net|ai|io|dev|app|co|edu|gov)\b/.test(lower)
@@ -242,9 +252,9 @@ const buildAcceptanceCriteria = (
   } else if (action === "send_chat_message") {
     criteria.push("The outgoing message is prepared or sent only after permission checks.");
   } else if (action === "desktop_control") {
-    criteria.push("Visible Chrome is opened or focused on the local Mac.");
-    criteria.push("Navigation and page state are recorded in the audit log.");
-    criteria.push("Sensitive website actions are blocked or routed through confirmation.");
+    criteria.push("The local Mac bridge runs the requested computer action.");
+    criteria.push("Screen, shell, or app state is recorded in the audit log.");
+    criteria.push("Sensitive computer actions are blocked or routed through confirmation.");
   } else {
     criteria.push("Code changes happen on a new branch or isolated worktree.");
     criteria.push("Tests or validation are run before any commit or push.");
@@ -261,7 +271,7 @@ const inferDesktopRisk = (
   lower: string
 ): NonNullable<DeveloperTask["riskLevel"]> => {
   if (
-    /\b(password|passcode|secret|api key|token|credit card|payment|purchase|buy|checkout|bank|ssn|social security|wire|transfer money|delete account|change password|2fa|otp|captcha|admin panel)\b/.test(
+    /\b(password|passcode|secret|api key|token|credential|keychain|credit card|card number|cvv|payment|purchase|buy|checkout|bank|ssn|social security|wire|transfer money|delete account|change password|2fa|otp|captcha|admin panel|bypass security)\b/.test(
       lower
     )
   ) {
@@ -269,7 +279,7 @@ const inferDesktopRisk = (
   }
 
   if (
-    /\b(submit|send|post|upload|attach|save settings|account settings|change setting|create account|sign up|login|log in|sign in|email|message|comment|reply|publish)\b/.test(
+    /\b(submit|send|post|upload|attach|save settings|account settings|change setting|create account|sign up|login|log in|sign in|email|message|comment|reply|publish|delete|remove|trash|move files|rename files|chmod|chown|sudo|kill|install|uninstall|launchctl|deploy|commit|push|merge)\b/.test(
       lower
     )
   ) {
@@ -278,6 +288,104 @@ const inferDesktopRisk = (
 
   return "low";
 };
+
+const inferDesktopMode = (
+  lower: string
+): NonNullable<DeveloperTask["desktopMode"]> => {
+  if (
+    /\b(run (?:the )?(?:command|shell)|shell command|execute (?:the )?command|terminal command|list files|show files|ls\b|pwd\b|find\b|du\b|cat\b)\b/.test(
+      lower
+    )
+  ) {
+    return "local_shell";
+  }
+
+  if (
+    /\b(chrome|browser|website|web site|url|navigate|go to|visit|google|github search|web form)\b/.test(
+      lower
+    ) ||
+    /\b[a-z0-9-]+\.(?:com|org|net|ai|io|dev|app|co|edu|gov)\b/.test(lower)
+  ) {
+    return "normal_chrome";
+  }
+
+  return "full_mac";
+};
+
+const inferTargetApp = (
+  utterance: string,
+  lower: string,
+  desktopMode: DeveloperTask["desktopMode"]
+): string | undefined => {
+  if (desktopMode === "local_shell") {
+    return "shell";
+  }
+
+  const knownApps: Array<[RegExp, string]> = [
+    [/\bchrome|browser|google\b/i, "Chrome"],
+    [/\bfinder|downloads|documents|desktop|applications folder\b/i, "Finder"],
+    [/\bterminal|shell\b/i, "Terminal"],
+    [/\bsystem settings|settings app|system preferences\b/i, "System Settings"],
+    [/\bmail\b/i, "Mail"],
+    [/\bcalendar\b/i, "Calendar"],
+    [/\bnotes\b/i, "Notes"],
+    [/\bmessages\b/i, "Messages"],
+    [/\bslack\b/i, "Slack"]
+  ];
+
+  for (const [pattern, app] of knownApps) {
+    if (pattern.test(utterance)) {
+      return app;
+    }
+  }
+
+  const openApp = lower.match(/\b(?:open|launch|focus)\s+([a-z][a-z0-9 ]{1,60}?)(?:\s+app)?(?:[.!?]|$)/i)?.[1];
+
+  if (openApp) {
+    return titleCaseApp(openApp);
+  }
+
+  return desktopMode === "normal_chrome" ? "Chrome" : "any";
+};
+
+const inferShellCommand = (utterance: string): string | undefined => {
+  const direct = utterance.match(
+    /\b(?:run|execute)\s+(?:the\s+)?(?:shell\s+)?(?:command\s+)?[`"“]?(.+?)[`"”]?(?:\s+(?:on|in|from)\s+(?:my\s+)?(?:desktop|downloads|documents|home folder|home))?[.!?]?$/i
+  )?.[1];
+
+  if (direct) {
+    return direct.trim();
+  }
+
+  if (/\blist files\b/i.test(utterance) || /\bshow files\b/i.test(utterance)) {
+    return "ls";
+  }
+
+  return undefined;
+};
+
+const inferShellCwd = (utterance: string, lower: string): string | undefined => {
+  if (/\bdesktop\b/.test(lower)) {
+    return "~/Desktop";
+  }
+
+  if (/\bdownloads\b/.test(lower)) {
+    return "~/Downloads";
+  }
+
+  if (/\bdocuments\b/.test(lower)) {
+    return "~/Documents";
+  }
+
+  const cwd = utterance.match(/\b(?:in|from|on)\s+((?:\/|~\/)[^\s.!?]+)\b/i)?.[1];
+  return cwd?.trim();
+};
+
+const titleCaseApp = (value: string): string =>
+  value
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const extractUrl = (utterance: string, lower: string): string | undefined => {
   const explicit = utterance.match(/https?:\/\/[^\s"')]+/i)?.[0];

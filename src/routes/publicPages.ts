@@ -105,8 +105,8 @@ publicPagesRouter.get("/sms-opt-in", (_request, response) => {
         <h1>Text Jarvis to control CallAI.</h1>
         <p>
           CallAI is a private developer-operator assistant. Authorized users can
-          text Jarvis to chat, create coding tasks, check task status, and approve
-          pending actions.
+          text Jarvis to chat, create coding tasks, control the local Mac bridge,
+          check task status, and approve pending actions.
         </p>
         <div class="panel">
           <p>
@@ -148,9 +148,9 @@ publicPagesRouter.get("/sms-opt-in", (_request, response) => {
         <h2>Message Types</h2>
         <ul>
           <li>Conversational replies, such as help and status responses.</li>
-          <li>Task acknowledgements when a coding or project request is queued.</li>
+          <li>Task acknowledgements when coding, project, or local Mac work is queued.</li>
           <li>Progress, completion, blocked, or failure notifications.</li>
-          <li>Confirmation prompts before sensitive actions such as commit, push, deletion, deploy, or secret changes.</li>
+          <li>Confirmation prompts before sensitive actions such as external sends, file deletion, settings changes, commit, push, deploy, or secret changes.</li>
         </ul>
       </section>
 
@@ -158,7 +158,7 @@ publicPagesRouter.get("/sms-opt-in", (_request, response) => {
         <h2>Example Messages</h2>
         <div class="panel">
           <p><strong>User:</strong> hello</p>
-          <p><strong>Jarvis:</strong> Online. I can chat, queue repo work, check status, and handle approvals.</p>
+          <p><strong>Jarvis:</strong> Online. I can chat, queue repo work, use the Mac local bridge, check status, and handle approvals.</p>
           <p><strong>User:</strong> inspect the main repo</p>
           <p><strong>Jarvis:</strong> Queued task 123456. I'll report back when it finishes.</p>
           <p><strong>Jarvis:</strong> Task 123456 needs approval before commit or push. Reply approve 123456 or deny 123456.</p>

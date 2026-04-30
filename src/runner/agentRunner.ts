@@ -20,6 +20,7 @@ const runnerId =
 const pollIntervalMs = Number(process.env.RUNNER_POLL_INTERVAL_MS ?? 5000);
 const taskScope = parseTaskScope(process.env.RUNNER_TASK_SCOPE);
 const desktopControlEnabled = isDesktopControlEnabled(runnerId);
+const fullComputerControlEnabled = isFullComputerControlEnabled();
 
 let stopping = false;
 let healthServer: Server | null = null;
@@ -29,6 +30,7 @@ const main = async (): Promise<void> => {
     runner_id: runnerId,
     task_scope: taskScope,
     desktop_control: desktopControlEnabled ? "enabled" : "disabled",
+    full_computer_control: fullComputerControlEnabled ? "enabled" : "disabled",
     database: isDatabaseConfigured() ? "configured" : "memory"
   });
 
@@ -39,14 +41,16 @@ const main = async (): Promise<void> => {
     event_type: "runner.started",
     payload: {
       runner_id: runnerId,
-      task_scope: taskScope
+      task_scope: taskScope,
+      full_computer_control: fullComputerControlEnabled
     }
   });
 
   while (!stopping) {
     try {
       const claimed = await database.claimNextQueuedTask("codex_local", taskScope, {
-        allowDesktopControl: desktopControlEnabled
+        allowDesktopControl: desktopControlEnabled || fullComputerControlEnabled,
+        allowFullComputerControl: fullComputerControlEnabled
       });
 
       if (!claimed) {
@@ -85,7 +89,8 @@ const main = async (): Promise<void> => {
     payload: {
       runner_id: runnerId,
       task_scope: taskScope,
-      desktop_control: desktopControlEnabled
+      desktop_control: desktopControlEnabled,
+      full_computer_control: fullComputerControlEnabled
     }
   });
 
@@ -150,6 +155,7 @@ const logPreflight = async (): Promise<void> => {
       default_repo_path: process.env.DEFAULT_REPO_PATH || process.cwd(),
       task_scope: taskScope,
       desktop_control: desktopControlEnabled,
+      full_computer_control: fullComputerControlEnabled,
       code_execution_mode: process.env.CODEX_EXECUTION_MODE || "local"
     }
   };
@@ -180,6 +186,10 @@ function isDesktopControlEnabled(id: string): boolean {
   }
 
   return process.platform === "darwin" && id === "macbook-local-bridge";
+}
+
+function isFullComputerControlEnabled(): boolean {
+  return process.env.RUNNER_ENABLE_FULL_COMPUTER_CONTROL === "true";
 }
 
 const checkCodexVersion = async (): Promise<{

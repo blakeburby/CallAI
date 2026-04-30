@@ -15,6 +15,13 @@ process.env.VAPI_ASSISTANT_NAME = "Jarvis Test";
 const { app } = await import("./app.js");
 const { database } = await import("./services/dbService.js");
 const { smsChatService } = await import("./modules/sms/smsChatService.js");
+const { taskService } = await import("./modules/execution-engine/taskService.js");
+const {
+  classifyComputerInstructionRisk,
+  classifyShellCommandRisk,
+  inferShellCommandFromInstructions,
+  redactComputerText
+} = await import("./modules/mac-computer-controller/macComputerController.js");
 
 const withServer = async <T>(
   callback: (baseUrl: string) => Promise<T>
@@ -120,6 +127,75 @@ test("codex-thread heartbeat refreshes the active job and run without duplicate 
   assert.equal(duplicateClaim, null);
 });
 
+test("full-computer parser and runner claim gates route Mac tasks safely", async () => {
+  const finder = await taskService.createFromUtterance({
+    utterance: "Open Finder and show my Downloads",
+    source: "telegram"
+  });
+  assert.equal(finder.status, "queued");
+  assert.equal(finder.execution_target, "runner");
+  assert.equal(finder.interpreted_task.action, "desktop_control");
+  assert.equal(finder.interpreted_task.desktopMode, "full_mac");
+  assert.equal(finder.interpreted_task.targetApp, "Finder");
+
+  const shell = await taskService.createFromUtterance({
+    utterance: "run ls on Desktop",
+    source: "telegram"
+  });
+  assert.equal(shell.status, "queued");
+  assert.equal(shell.interpreted_task.action, "desktop_control");
+  assert.equal(shell.interpreted_task.desktopMode, "local_shell");
+  assert.equal(shell.interpreted_task.targetApp, "shell");
+  assert.equal(shell.interpreted_task.shellCommand, "ls");
+  assert.equal(shell.interpreted_task.shellCwd, "~/Desktop");
+
+  const risky = await taskService.createFromUtterance({
+    utterance: "Open Mail and send this email to the team",
+    source: "telegram"
+  });
+  assert.equal(risky.status, "needs_confirmation");
+  assert.equal(risky.interpreted_task.desktopMode, "full_mac");
+  assert.equal(risky.interpreted_task.riskLevel, "needs_confirmation");
+  assert.ok(await database.getPendingConfirmationForTask(risky.task_id));
+
+  const blocked = await taskService.createFromUtterance({
+    utterance: "Enter my password and solve the captcha",
+    source: "telegram"
+  });
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.interpreted_task.riskLevel, "blocked");
+  assert.equal(await database.getPendingConfirmationForTask(blocked.task_id), null);
+
+  const firstClaim = await database.claimNextQueuedTask("codex_local", "all", {
+    allowDesktopControl: true,
+    allowFullComputerControl: false
+  });
+  assert.equal(firstClaim?.task.id, undefined);
+
+  const fullClaim = await database.claimNextQueuedTask("codex_local", "all", {
+    allowDesktopControl: true,
+    allowFullComputerControl: true
+  });
+  assert.equal(fullClaim?.task.id, finder.task_id);
+});
+
+test("Mac computer controller safety helpers classify shell and GUI risk", () => {
+  assert.equal(classifyShellCommandRisk("ls -la", "/Users/blakeburby/Desktop"), "low");
+  assert.equal(classifyShellCommandRisk("rm -rf ~/Desktop/test"), "needs_confirmation");
+  assert.equal(classifyShellCommandRisk("cat .env"), "blocked");
+  assert.equal(classifyComputerInstructionRisk("open Finder and show Downloads"), "low");
+  assert.equal(
+    classifyComputerInstructionRisk("delete files from Downloads"),
+    "needs_confirmation"
+  );
+  assert.equal(classifyComputerInstructionRisk("enter my password"), "blocked");
+  assert.equal(inferShellCommandFromInstructions("run ls on Desktop"), "ls");
+  assert.equal(
+    redactComputerText("OPENAI_API_KEY=sk-secretvalue123456789"),
+    "OPENAI_API_KEY=[redacted]"
+  );
+});
+
 test("operator chat shares Jarvis history and only creates tasks for task requests", async () => {
   await withServer(async (baseUrl) => {
     const cookie = await login(baseUrl);
@@ -138,7 +214,7 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
       },
       {
         message: "can you control my computer?",
-        pattern: /safe Chrome|local-bridge|full arbitrary desktop/i
+        pattern: /Mac local bridge|local bridge|safe shell/i
       }
     ];
 
@@ -294,7 +370,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
       sharedMessages.some(
         (message) =>
           message.role === "assistant" &&
-          /safe Chrome|local-bridge|full arbitrary desktop/i.test(message.body)
+          /Mac local bridge|local bridge|safe shell/i.test(message.body)
       )
     );
   });

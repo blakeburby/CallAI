@@ -85,6 +85,7 @@ type DesktopSnapshotInput = {
 
 type ClaimTaskOptions = {
   allowDesktopControl?: boolean;
+  allowFullComputerControl?: boolean;
 };
 
 type SmsConversationInput = {
@@ -1487,9 +1488,7 @@ export const database = {
     if (db) {
       const client = await db.connect();
       const scopeFilter = taskScopeFilter(scope);
-      const desktopFilter = options.allowDesktopControl
-        ? ""
-        : "and (structured_request->>'action') is distinct from 'desktop_control'";
+      const desktopFilter = desktopClaimFilter(options);
 
       try {
         await client.query("begin");
@@ -1549,8 +1548,7 @@ export const database = {
           item.status === "queued" &&
           item.execution_target === "runner" &&
           taskMatchesScope(item, scope) &&
-          (options.allowDesktopControl ||
-            item.structured_request.action !== "desktop_control")
+          taskMatchesDesktopClaimOptions(item, options)
       );
 
     if (!task) {
@@ -1919,6 +1917,21 @@ function taskScopeFilter(scope: RunnerTaskScope): {
   };
 }
 
+function desktopClaimFilter(options: ClaimTaskOptions): string {
+  if (!options.allowDesktopControl) {
+    return "and (structured_request->>'action') is distinct from 'desktop_control'";
+  }
+
+  if (!options.allowFullComputerControl) {
+    return `and (
+      (structured_request->>'action') is distinct from 'desktop_control'
+      or coalesce(structured_request->>'desktopMode', 'normal_chrome') = 'normal_chrome'
+    )`;
+  }
+
+  return "";
+}
+
 function taskMatchesScope(
   task: DeveloperTaskRecord,
   scope: RunnerTaskScope
@@ -1932,6 +1945,22 @@ function taskMatchesScope(
   }
 
   return true;
+}
+
+function taskMatchesDesktopClaimOptions(
+  task: DeveloperTaskRecord,
+  options: ClaimTaskOptions
+): boolean {
+  if (task.structured_request.action !== "desktop_control") {
+    return true;
+  }
+
+  if (!options.allowDesktopControl) {
+    return false;
+  }
+
+  const mode = task.structured_request.desktopMode ?? "normal_chrome";
+  return options.allowFullComputerControl || mode === "normal_chrome";
 }
 
 async function queryMany<T>(

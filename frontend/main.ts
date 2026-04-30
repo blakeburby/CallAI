@@ -80,11 +80,13 @@ type DeveloperTask = {
   permissionRequired: string;
   instructions: string;
   acceptanceCriteria: string[];
-  targetApp?: "chrome";
+  targetApp?: string;
   url?: string;
   riskLevel?: "low" | "needs_confirmation" | "blocked";
-  desktopMode?: "normal_chrome";
+  desktopMode?: "normal_chrome" | "full_mac" | "local_shell";
   desktopApprovalGranted?: boolean;
+  shellCommand?: string;
+  shellCwd?: string;
   confidence: number;
 };
 
@@ -1421,10 +1423,12 @@ const renderDesktopFields = (task: DeveloperTask): string => {
   return `
     <div><dt>Desktop App</dt><dd>${escapeHtml(task.targetApp ?? "chrome")}</dd></div>
     <div><dt>Mode</dt><dd>${escapeHtml(formatLabel(task.desktopMode ?? "normal_chrome"))}</dd></div>
-    <div><dt>Target URL</dt><dd>${escapeHtml(task.url ?? "Open/focus Chrome")}</dd></div>
+    <div><dt>Target URL</dt><dd>${escapeHtml(task.url ?? "Local Mac")}</dd></div>
+    ${task.shellCommand ? `<div><dt>Shell</dt><dd>${escapeHtml(task.shellCommand)}</dd></div>` : ""}
+    ${task.shellCwd ? `<div><dt>Shell CWD</dt><dd>${escapeHtml(task.shellCwd)}</dd></div>` : ""}
     <div><dt>Risk</dt><dd>${escapeHtml(formatLabel(task.riskLevel ?? "low"))}</dd></div>
     <div><dt>Approved</dt><dd>${task.desktopApprovalGranted ? "Yes" : "No"}</dd></div>
-    <div><dt>Current URL</dt><dd>${escapeHtml(state.desktopState?.current_url ?? "Waiting for browser state")}</dd></div>
+    <div><dt>Current State</dt><dd>${escapeHtml(state.desktopState?.current_url ?? "Waiting for local bridge state")}</dd></div>
   `;
 };
 
@@ -2162,6 +2166,12 @@ const eventTitle = (event: AuditEvent): string => {
     "desktop.confirmation_required": "Desktop approval required",
     "desktop.blocked": "Desktop blocked",
     "desktop.snapshot_failed": "Desktop snapshot failed",
+    "computer.session_started": "Mac control started",
+    "computer.gui_completed": "Mac action completed",
+    "computer.shell_started": "Shell command started",
+    "computer.shell_completed": "Shell command completed",
+    "computer.confirmation_required": "Mac approval required",
+    "computer.blocked": "Mac control blocked",
     "codex_thread.claimed": "Codex chat claimed task",
     "codex_thread.completed": "Codex chat completed task",
     "codex_thread.failed": "Codex chat failed task",
@@ -2205,6 +2215,21 @@ const eventSummary = (
 
   if (event.event_type === "desktop.observe") {
     return `${stringField(payload.page_title) ?? "Page"} at ${stringField(payload.current_url) ?? "unknown URL"}.`;
+  }
+
+  if (event.event_type === "computer.gui_completed") {
+    return `${stringField(payload.front_app) ?? "Mac"} ${stringField(payload.window_title) ?? "updated"}.`;
+  }
+
+  if (event.event_type === "computer.shell_completed") {
+    return `Command finished in ${stringField(payload.cwd) ?? "local shell"}.`;
+  }
+
+  if (
+    event.event_type === "computer.confirmation_required" ||
+    event.event_type === "computer.blocked"
+  ) {
+    return stringField(payload.reason) ?? "Mac control paused.";
   }
 
   if (event.event_type === "desktop.action_planned") {
