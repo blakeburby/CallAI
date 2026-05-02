@@ -443,7 +443,10 @@ const runChromeWithoutDom = async (
 
   await navigateChrome(targetUrl, browserApp);
   await wait(actionWaitMs({ action: "navigate", url: targetUrl }));
-  const page = await inspectChromeBasic(browserApp);
+  const page = await inspectChromeBasic(browserApp).catch(() => ({
+    title: null,
+    url: targetUrl
+  }));
   const snapshot = await recordDesktopSnapshot({
     task,
     run,
