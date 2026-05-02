@@ -152,6 +152,16 @@ test("full-computer parser and runner claim gates route Mac tasks safely", async
   assert.equal(finder.interpreted_task.desktopMode, "full_mac");
   assert.equal(finder.interpreted_task.targetApp, "Finder");
 
+  const browser = await taskService.createFromUtterance({
+    utterance: "Open Chrome and go to example.com",
+    source: "telegram"
+  });
+  assert.equal(browser.status, "queued");
+  assert.equal(browser.execution_target, "runner");
+  assert.equal(browser.interpreted_task.action, "desktop_control");
+  assert.equal(browser.interpreted_task.desktopMode, "normal_chrome");
+  assert.equal(browser.interpreted_task.targetApp, "ChatGPT Atlas");
+
   const shell = await taskService.createFromUtterance({
     utterance: "run ls on Desktop",
     source: "telegram"
@@ -184,7 +194,7 @@ test("full-computer parser and runner claim gates route Mac tasks safely", async
     allowDesktopControl: true,
     allowFullComputerControl: false
   });
-  assert.equal(firstClaim?.task.id, undefined);
+  assert.equal(firstClaim?.task.id, browser.task_id);
 
   const fullClaim = await database.claimNextQueuedTask("codex_local", "all", {
     allowDesktopControl: true,

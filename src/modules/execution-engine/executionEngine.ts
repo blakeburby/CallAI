@@ -606,7 +606,7 @@ const requestDesktopControlApproval = async (
     event_type: "desktop.confirmation_required",
     payload: {
       confirmation_id: confirmation.id,
-      target_app: structured.targetApp ?? "chrome",
+      target_app: structured.targetApp ?? "ChatGPT Atlas",
       requested_url: structured.url ?? null
     }
   });

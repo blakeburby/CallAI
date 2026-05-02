@@ -313,16 +313,16 @@ const quickTasks: QuickTask[] = [
     repoHint: "main repo"
   },
   {
-    label: "Open Chrome",
-    prompt: "Open Chrome on my Mac and go to example.com."
+    label: "Open Atlas",
+    prompt: "Open Atlas on my Mac and go to example.com."
   },
   {
     label: "Search GitHub",
-    prompt: "Open Chrome and search GitHub for CallAI."
+    prompt: "Open Atlas and search GitHub for CallAI."
   },
   {
     label: "Google Vapi",
-    prompt: "Open Chrome, search Google for Vapi phone numbers, and summarize the page."
+    prompt: "Open Atlas, search Google for Vapi phone numbers, and summarize the page."
   },
   {
     label: "Summarize progress",
@@ -1250,7 +1250,7 @@ const renderChatSection = (): string => `
     <form id="chat-form" class="chat-form">
       <textarea name="message" rows="3" placeholder="Message Jarvis. Use task open Finder..., task run ls on Desktop, or ask what happened/status/approve/deny.">${escapeHtml(state.chatDraft)}</textarea>
       <div class="chat-form-row">
-        <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Mac / Chrome" />
+        <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Mac / Atlas" />
         <button class="primary" type="submit" ${state.chatBusy ? "disabled" : ""}>Send</button>
       </div>
     </form>
@@ -1375,9 +1375,9 @@ const renderChatTab = (): string => `
         }
       </div>
       <form id="chat-form" class="chat-form">
-        <textarea name="message" rows="3" placeholder="Ask Jarvis anything, or give it work: check status, inspect a repo, edit safely, browse Chrome, or continue a task.">${escapeHtml(state.chatDraft)}</textarea>
+        <textarea name="message" rows="3" placeholder="Ask Jarvis anything, or give it work: check status, inspect a repo, edit safely, browse Atlas, or continue a task.">${escapeHtml(state.chatDraft)}</textarea>
         <div class="chat-form-row">
-          <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Chrome" />
+          <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Atlas" />
           <button class="primary" type="submit" ${state.chatBusy ? "disabled" : ""}>Send</button>
         </div>
       </form>
@@ -1483,7 +1483,7 @@ const renderAttentionBanner = (): string => {
   state.overview?.sms.attention.forEach((item) => items.push(item));
 
   if (selectedTask()?.normalized_action === "desktop_control" && !state.desktopState) {
-    items.push("Desktop preview will appear after the Mac bridge observes Chrome.");
+    items.push("Desktop preview will appear after the Mac bridge observes Atlas.");
   }
 
   if (!items.length) {
@@ -1703,7 +1703,7 @@ const renderDesktopFields = (task: DeveloperTask): string => {
   }
 
   return `
-    <div><dt>Desktop App</dt><dd>${escapeHtml(task.targetApp ?? "chrome")}</dd></div>
+    <div><dt>Desktop App</dt><dd>${escapeHtml(task.targetApp ?? "ChatGPT Atlas")}</dd></div>
     <div><dt>Mode</dt><dd>${escapeHtml(formatLabel(task.desktopMode ?? "normal_chrome"))}</dd></div>
     <div><dt>Target URL</dt><dd>${escapeHtml(task.url ?? "Local Mac")}</dd></div>
     ${task.shellCommand ? `<div><dt>Shell</dt><dd>${escapeHtml(task.shellCommand)}</dd></div>` : ""}
@@ -1740,15 +1740,15 @@ const renderDesktopPreview = (): string => {
           <p class="section-label">Desktop Preview</p>
           <h2>No desktop task selected</h2>
         </div>
-        <span>Chrome</span>
+        <span>Atlas</span>
       </div>
-      <div class="preview-placeholder">Select a Chrome automation task to see the latest page state.</div>
+      <div class="preview-placeholder">Select an Atlas/browser automation task to see the latest page state.</div>
     `;
   }
 
   const desktop = state.desktopState;
   const image = desktop?.screenshot_data_url
-    ? `<img src="${desktop.screenshot_data_url}" alt="Latest Chrome preview" />`
+    ? `<img src="${desktop.screenshot_data_url}" alt="Latest Atlas preview" />`
     : `<div class="preview-placeholder ${desktop?.redacted ? "redacted" : ""}">${
         desktop?.redacted
           ? "Preview withheld for privacy."
@@ -1759,7 +1759,7 @@ const renderDesktopPreview = (): string => {
     <div class="panel-heading">
       <div>
         <p class="section-label">Desktop Preview</p>
-        <h2>${escapeHtml(desktop?.page_title ?? "Chrome")}</h2>
+        <h2>${escapeHtml(desktop?.page_title ?? "Atlas")}</h2>
       </div>
       <span>${escapeHtml(stateLabel)}</span>
     </div>

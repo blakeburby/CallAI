@@ -59,7 +59,9 @@ npm run local-bridge
 
 Set `RUNNER_ENABLE_FULL_COMPUTER_CONTROL=true` for Telegram/website tasks that
 need full Mac GUI or local shell control. Without it, the bridge only claims the
-existing normal Chrome desktop tasks.
+existing bounded browser desktop tasks. Browser tasks default to
+`ChatGPT Atlas`; set `LOCAL_BRIDGE_BROWSER_APP` or
+`COMPUTER_CONTROL_BROWSER_APP` if a different Mac browser app should be used.
 
 Set `JARVIS_CODEX_CHAT_ENABLED=true` to let Telegram casual messages use the
 local bridge's Codex CLI for delayed soul-style replies. Task execution still
@@ -172,13 +174,13 @@ codex exec --json --sandbox workspace-write --cd <repo> <prompt>
 ```
 
 Visible computer control also runs through the Mac local bridge. Requests such
-as “open Chrome and go to example.com,” “open Finder and show Downloads,” or
-“run ls on Desktop” are parsed as `desktop_control` tasks. Chrome requests keep
-using Blake's normal Chrome session and the bounded observe-plan-act browser
-loop. Full-Mac and shell requests use the local bridge for app focus/opening,
+as “open Atlas and go to example.com,” “open Finder and show Downloads,” or
+“run ls on Desktop” are parsed as `desktop_control` tasks. Browser requests use
+Blake's normal Atlas session and the bounded observe-plan-act browser loop.
+Full-Mac and shell requests use the local bridge for app focus/opening,
 Finder folders, screenshots, simple keyboard/mouse actions, and safe shell
-commands. It records `desktop.*` events for Chrome work and `computer.*` events
-for full-Mac/shell work.
+commands. It records `desktop.*` events for browser work and `computer.*`
+events for full-Mac/shell work.
 
 For desktop tasks, the bridge writes one latest-only `desktop_snapshots` record
 with current state, page/window title, latest action, step count, and a
@@ -243,7 +245,7 @@ The Mac must be awake, online, and logged in for this LaunchAgent to run.
 
 When `CODEX_THREAD_BRIDGE_ENABLED=true`, CallAI routes repo/code tasks to this
 project's Codex thread instead of letting background runners claim them. Desktop
-Chrome work and project-chat updates still use the existing runner paths.
+Atlas/browser work and project-chat updates still use the existing runner paths.
 
 The bridge uses Railway Postgres as the inbox. A Codex heartbeat automation runs
 from `/Users/blakeburby/Developer/CallAI-main`, claims one waiting task with

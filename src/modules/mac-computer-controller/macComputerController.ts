@@ -640,7 +640,19 @@ const appAlias = (value: string): string => {
   const lower = value.toLowerCase();
 
   if (lower === "chrome" || lower === "google chrome") {
-    return "Google Chrome";
+    return (
+      process.env.LOCAL_BRIDGE_BROWSER_APP ||
+      process.env.COMPUTER_CONTROL_BROWSER_APP ||
+      "ChatGPT Atlas"
+    );
+  }
+
+  if (lower === "browser" || lower === "atlas" || lower === "chatgpt atlas") {
+    return (
+      process.env.LOCAL_BRIDGE_BROWSER_APP ||
+      process.env.COMPUTER_CONTROL_BROWSER_APP ||
+      "ChatGPT Atlas"
+    );
   }
 
   if (lower === "settings" || lower === "system preferences") {

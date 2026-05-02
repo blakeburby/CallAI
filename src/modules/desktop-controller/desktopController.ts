@@ -85,6 +85,29 @@ type SnapshotResult = {
 
 const DEFAULT_MAX_STEPS = 8;
 const DEFAULT_STEP_TIMEOUT_MS = 15000;
+const DEFAULT_BROWSER_APP = "ChatGPT Atlas";
+const FALLBACK_BROWSER_APP = "Google Chrome";
+
+const browserAppName = (structured?: DeveloperTask): string => {
+  const configured =
+    process.env.LOCAL_BRIDGE_BROWSER_APP ||
+    process.env.COMPUTER_CONTROL_BROWSER_APP;
+
+  if (configured?.trim()) {
+    return configured.trim();
+  }
+
+  const requested = structured?.targetApp?.trim();
+
+  if (
+    requested &&
+    !/^(chrome|google chrome|browser|google)$/i.test(requested)
+  ) {
+    return requested;
+  }
+
+  return DEFAULT_BROWSER_APP;
+};
 
 export const desktopController = {
   async runChromeTask(
@@ -97,6 +120,7 @@ export const desktopController = {
     }
 
     const targetUrl = structured.url ?? inferUrl(structured.instructions);
+    const browserApp = browserAppName(structured);
     const maxSteps = envInt("DESKTOP_MAX_STEPS", DEFAULT_MAX_STEPS);
     const fastAutonomy = envBool("DESKTOP_FAST_AUTONOMY", true);
     const history: ActionHistoryItem[] = [];
@@ -106,7 +130,7 @@ export const desktopController = {
       run_id: run.id,
       event_type: "desktop.session_started",
       payload: {
-        target_app: "chrome",
+        target_app: browserApp,
         desktop_mode: structured.desktopMode ?? "normal_chrome",
         requested_url: targetUrl,
         risk_level: structured.riskLevel ?? "low",
@@ -116,35 +140,35 @@ export const desktopController = {
     });
     void jarvisChatNotifier.taskProgress(
       task,
-      `Opening Chrome for task ${task.id.slice(-6)}: ${structured.title}.`,
+      `Opening ${browserApp} for task ${task.id.slice(-6)}: ${structured.title}.`,
       "desktop_session_started"
     );
 
-    await openChrome();
+    await openBrowser(browserApp);
     await auditLog.log({
       task_id: task.id,
       run_id: run.id,
       event_type: "desktop.chrome_opened",
       payload: {
-        target_app: "chrome",
+        target_app: browserApp,
         desktop_mode: "normal_chrome"
       }
     });
     void jarvisChatNotifier.taskProgress(
       task,
-      "Chrome is open. Checking the page and choosing the next move.",
+      `${browserApp} is open. Checking the page and choosing the next move.`,
       "desktop_chrome_opened"
     );
 
-    const javascriptAvailable = await chromeJavascriptAvailable();
+    const javascriptAvailable = await chromeJavascriptAvailable(browserApp);
 
     if (!javascriptAvailable) {
-      return runChromeWithoutDom(task, run, structured, targetUrl);
+      return runChromeWithoutDom(task, run, structured, targetUrl, browserApp);
     }
 
     for (let index = 0; index < maxSteps; index += 1) {
       const step = index + 1;
-      const observation = await observeChrome();
+      const observation = await observeChrome(browserApp);
       const observedSnapshot = await recordDesktopSnapshot({
         task,
         run,
@@ -241,7 +265,7 @@ export const desktopController = {
         });
         void jarvisChatNotifier.taskProgress(
           task,
-          `Chrome hit an approval gate on task ${task.id.slice(-6)}: ${safety.reason}`,
+          `${browserApp} hit an approval gate on task ${task.id.slice(-6)}: ${safety.reason}`,
           "desktop_confirmation_required"
         );
         return {
@@ -258,7 +282,7 @@ export const desktopController = {
       if (planned.action === "done") {
         const summary =
           planned.summary ??
-          `Completed Chrome task on ${observation.title || observation.url || "the current page"}.`;
+          `Completed ${browserApp} task on ${observation.title || observation.url || "the current page"}.`;
         const snapshot = await recordDesktopSnapshot({
           task,
           run,
@@ -285,7 +309,7 @@ export const desktopController = {
         });
         void jarvisChatNotifier.taskProgress(
           task,
-          `Chrome finished task ${task.id.slice(-6)}: ${summary}`,
+          `${browserApp} finished task ${task.id.slice(-6)}: ${summary}`,
           "desktop_action_completed"
         );
         return {
@@ -298,9 +322,9 @@ export const desktopController = {
         };
       }
 
-      const actionResult = await executeAction(planned);
+      const actionResult = await executeAction(planned, browserApp);
       await wait(actionWaitMs(planned));
-      const afterObservation = await observeChrome().catch(() => observation);
+      const afterObservation = await observeChrome(browserApp).catch(() => observation);
       const latestAction = actionLabel(planned, actionResult);
       const snapshot = await recordDesktopSnapshot({
         task,
@@ -337,12 +361,12 @@ export const desktopController = {
       });
       void jarvisChatNotifier.taskProgress(
         task,
-        `Chrome step ${step} on task ${task.id.slice(-6)}: ${latestAction}.`,
+        `${browserApp} step ${step} on task ${task.id.slice(-6)}: ${latestAction}.`,
         "desktop_action_completed"
       );
     }
 
-    const finalObservation = await observeChrome();
+    const finalObservation = await observeChrome(browserApp);
     await recordDesktopSnapshot({
       task,
       run,
@@ -352,7 +376,7 @@ export const desktopController = {
       structured
     });
     return {
-      summary: `Chrome task reached the ${maxSteps}-step limit on ${finalObservation.title || finalObservation.url || "the current page"}.`,
+      summary: `${browserApp} task reached the ${maxSteps}-step limit on ${finalObservation.title || finalObservation.url || "the current page"}.`,
       currentUrl: finalObservation.url,
       pageTitle: finalObservation.title,
       targetUrl,
@@ -362,13 +386,17 @@ export const desktopController = {
   }
 };
 
-const chromeJavascriptAvailable = async (): Promise<boolean> => {
+const chromeJavascriptAvailable = async (browserApp: string): Promise<boolean> => {
   if (!envBool("DESKTOP_REQUIRE_CHROME_JS_EVENTS", true)) {
     return true;
   }
 
   try {
-    await executeChromeJson(z.object({ ok: z.literal(true) }), "JSON.stringify({ ok: true })");
+    await executeChromeJson(
+      z.object({ ok: z.literal(true) }),
+      "JSON.stringify({ ok: true })",
+      browserApp
+    );
     return true;
   } catch {
     return false;
@@ -379,10 +407,11 @@ const runChromeWithoutDom = async (
   task: DeveloperTaskRecord,
   run: ExecutionRunRecord,
   structured: DeveloperTask,
-  targetUrl: string | null
+  targetUrl: string | null,
+  browserApp: string
 ): Promise<DesktopControlResult> => {
   const reason =
-    "Chrome DOM automation is unavailable from the background bridge. Simple navigation can continue, but clicking, typing, selecting, and form work need Chrome JavaScript Apple Events access for the LaunchAgent.";
+    `${browserApp} DOM automation is unavailable from the background bridge. Simple navigation can continue, but clicking, typing, selecting, and form work need browser JavaScript Apple Events access for the LaunchAgent.`;
 
   if (!targetUrl || requiresDomAutomation(structured.instructions)) {
     await logDesktopBlocked(task, run, reason, 0, {
@@ -412,9 +441,9 @@ const runChromeWithoutDom = async (
     }
   });
 
-  await navigateChrome(targetUrl);
+  await navigateChrome(targetUrl, browserApp);
   await wait(actionWaitMs({ action: "navigate", url: targetUrl }));
-  const page = await inspectChromeBasic();
+  const page = await inspectChromeBasic(browserApp);
   const snapshot = await recordDesktopSnapshot({
     task,
     run,
@@ -453,12 +482,12 @@ const runChromeWithoutDom = async (
   });
   void jarvisChatNotifier.taskProgress(
     task,
-    `Chrome navigated for task ${task.id.slice(-6)}: ${page.title || page.url || targetUrl}.`,
+    `${browserApp} navigated for task ${task.id.slice(-6)}: ${page.title || page.url || targetUrl}.`,
     "desktop_action_completed"
   );
 
   return {
-    summary: `Opened Chrome and navigated to ${page.title || page.url || targetUrl}.`,
+    summary: `Opened ${browserApp} and navigated to ${page.title || page.url || targetUrl}.`,
     currentUrl: page.url,
     pageTitle: page.title,
     targetUrl,
@@ -492,7 +521,7 @@ const recordDesktopSnapshot = async (input: {
 
   if (!redacted && envBool("DESKTOP_CAPTURE_SCREENSHOTS", true)) {
     try {
-      screenshotDataUrl = await captureChromeScreenshot();
+      screenshotDataUrl = await captureChromeScreenshot(browserAppName(input.structured));
     } catch (error) {
       await auditLog.log({
         task_id: input.task.id,
@@ -551,8 +580,8 @@ const shouldRedactSnapshot = (input: {
   );
 };
 
-const captureChromeScreenshot = async (): Promise<string | null> => {
-  const region = await chromeWindowRegion();
+const captureChromeScreenshot = async (browserApp: string): Promise<string | null> => {
+  const region = await chromeWindowRegion(browserApp);
 
   if (!region) {
     return null;
@@ -584,12 +613,19 @@ const compressScreenshot = async (path: string): Promise<void> => {
   ).catch(() => {});
 };
 
-const chromeWindowRegion = async (): Promise<string | null> => {
+const chromeWindowRegion = async (browserApp: string): Promise<string | null> => {
   const output = await runAppleScript([
-    'tell application "Google Chrome"',
-    '  if not (exists window 1) then return ""',
-    "  set b to bounds of front window",
-    "  return (item 1 of b as text) & \",\" & (item 2 of b as text) & \",\" & (item 3 of b as text) & \",\" & (item 4 of b as text)",
+    'tell application "System Events"',
+    `  tell process "${escapeAppleScriptString(browserApp)}"`,
+    '    if not (exists window 1) then return ""',
+    "    set p to position of front window",
+    "    set s to size of front window",
+    "    set leftEdge to item 1 of p",
+    "    set topEdge to item 2 of p",
+    "    set rightEdge to leftEdge + item 1 of s",
+    "    set bottomEdge to topEdge + item 2 of s",
+    "    return (leftEdge as text) & \",\" & (topEdge as text) & \",\" & (rightEdge as text) & \",\" & (bottomEdge as text)",
+    "  end tell",
     "end tell"
   ]);
   const [left, top, right, bottom] = output
@@ -653,19 +689,20 @@ const fallbackAction = (input: {
 
   return {
     action: "done",
-    summary: `Chrome is on ${input.observation.title || input.observation.url || "the requested page"}.`
+    summary: `${browserAppName(input.structured)} is on ${input.observation.title || input.observation.url || "the requested page"}.`
   };
 };
 
 const executeAction = async (
-  action: DesktopAction
+  action: DesktopAction,
+  browserApp: string
 ): Promise<Record<string, unknown>> => {
   switch (action.action) {
     case "navigate": {
       if (!action.url) {
         throw new Error("Desktop navigate action did not include a URL.");
       }
-      await navigateChrome(action.url);
+      await navigateChrome(action.url, browserApp);
       return { summary: `Navigated to ${action.url}.` };
     }
     case "click": {
@@ -674,7 +711,8 @@ const executeAction = async (
           ok: z.boolean(),
           clicked: z.string().nullable()
         }),
-        buildClickScript(action)
+        buildClickScript(action),
+        browserApp
       );
     }
     case "type": {
@@ -683,7 +721,8 @@ const executeAction = async (
           ok: z.boolean(),
           target: z.string().nullable()
         }),
-        buildTypeScript(action)
+        buildTypeScript(action),
+        browserApp
       );
     }
     case "select": {
@@ -693,7 +732,8 @@ const executeAction = async (
           target: z.string().nullable(),
           selected: z.string().nullable()
         }),
-        buildSelectScript(action)
+        buildSelectScript(action),
+        browserApp
       );
     }
     case "submit": {
@@ -702,7 +742,8 @@ const executeAction = async (
           ok: z.boolean(),
           submitted: z.string().nullable()
         }),
-        buildSubmitScript(action)
+        buildSubmitScript(action),
+        browserApp
       );
     }
     case "wait": {
@@ -809,7 +850,7 @@ const requiresDomAutomation = (instructions: string): boolean => {
   );
 };
 
-const observeChrome = async (): Promise<DesktopObservation> => {
+const observeChrome = async (browserApp: string): Promise<DesktopObservation> => {
   return executeChromeJson(
     z.object({
       title: z.string().nullable(),
@@ -830,35 +871,67 @@ const observeChrome = async (): Promise<DesktopObservation> => {
         })
       )
     }),
-    OBSERVE_SCRIPT
+    OBSERVE_SCRIPT,
+    browserApp
   );
 };
 
-const openChrome = async (): Promise<void> => {
-  await runAppleScript([
-    'tell application "Google Chrome"',
-    "  activate",
-    "  if not (exists window 1) then make new window",
-    "end tell"
-  ]);
+const openBrowser = async (browserApp: string): Promise<void> => {
+  try {
+    await runAppleScript([
+      `tell application "${escapeAppleScriptString(browserApp)}"`,
+      "  activate",
+      "  if not (exists window 1) then make new window",
+      "end tell"
+    ]);
+  } catch (error) {
+    if (browserApp === FALLBACK_BROWSER_APP) {
+      throw error;
+    }
+
+    await execFileAsync("open", ["-a", browserApp]).catch(async () => {
+      await runAppleScript([
+        `tell application "${FALLBACK_BROWSER_APP}"`,
+        "  activate",
+        "  if not (exists window 1) then make new window",
+        "end tell"
+      ]);
+    });
+  }
 };
 
-const navigateChrome = async (url: string): Promise<void> => {
-  await runAppleScript([
-    'tell application "Google Chrome"',
-    "  activate",
-    "  if not (exists window 1) then make new window",
-    `  set URL of active tab of front window to "${escapeAppleScriptString(url)}"`,
-    "end tell"
-  ]);
+const navigateChrome = async (url: string, browserApp: string): Promise<void> => {
+  try {
+    await runAppleScript([
+      `tell application "${escapeAppleScriptString(browserApp)}"`,
+      "  activate",
+      "  if not (exists window 1) then make new window",
+      `  set URL of active tab of front window to "${escapeAppleScriptString(url)}"`,
+      "end tell"
+    ]);
+  } catch (error) {
+    await execFileAsync("open", ["-a", browserApp, url], {
+      timeout: envInt("DESKTOP_STEP_TIMEOUT_MS", DEFAULT_STEP_TIMEOUT_MS)
+    }).catch(async () => {
+      if (browserApp === FALLBACK_BROWSER_APP) {
+        throw error;
+      }
+
+      await execFileAsync("open", ["-a", FALLBACK_BROWSER_APP, url], {
+        timeout: envInt("DESKTOP_STEP_TIMEOUT_MS", DEFAULT_STEP_TIMEOUT_MS)
+      });
+    });
+  }
 };
 
-const inspectChromeBasic = async (): Promise<{
+const inspectChromeBasic = async (
+  browserApp: string
+): Promise<{
   title: string | null;
   url: string | null;
 }> => {
   const output = await runAppleScript([
-    'tell application "Google Chrome"',
+    `tell application "${escapeAppleScriptString(browserApp)}"`,
     '  if not (exists window 1) then return ""',
     "  set pageTitle to title of active tab of front window",
     "  set pageUrl to URL of active tab of front window",
@@ -875,15 +948,16 @@ const inspectChromeBasic = async (): Promise<{
 
 const executeChromeJson = async <T>(
   schema: z.ZodType<T>,
-  javascript: string
+  javascript: string,
+  browserApp: string
 ): Promise<T> => {
   const raw = await runJxa(`
-    const chrome = Application("Google Chrome");
-    chrome.activate();
-    if (chrome.windows.length === 0) {
-      throw new Error("Chrome has no open windows.");
+    const browser = Application(${JSON.stringify(browserApp)});
+    browser.activate();
+    if (browser.windows.length === 0) {
+      throw new Error(${JSON.stringify(`${browserApp} has no open windows.`)});
     }
-    chrome.windows[0].activeTab.execute({
+    browser.windows[0].activeTab.execute({
       javascript: ${JSON.stringify(javascript)}
     });
   `);
@@ -891,7 +965,7 @@ const executeChromeJson = async <T>(
   try {
     return schema.parse(JSON.parse(raw));
   } catch (error) {
-    throw new Error(reasonWithDetail("Chrome returned an invalid automation result.", error));
+    throw new Error(reasonWithDetail(`${browserApp} returned an invalid automation result.`, error));
   }
 };
 

@@ -158,11 +158,11 @@ const renderExternalProgress = (
   }
 
   if (relation === "desktop_session_started") {
-    return `Task ${tail}: opening Chrome and getting oriented.`;
+    return `Task ${tail}: opening ${browserName(task)} and getting oriented.`;
   }
 
   if (relation === "desktop_chrome_opened") {
-    return `Task ${tail}: Chrome is open. I’m checking the page.`;
+    return `Task ${tail}: ${browserName(task)} is open. I’m checking the page.`;
   }
 
   if (relation === "desktop_confirmation_required") {
@@ -174,6 +174,21 @@ const renderExternalProgress = (
   }
 
   return null;
+};
+
+const browserName = (task: DeveloperTaskRecord): string => {
+  const structured = task.structured_request;
+  const target = structured?.targetApp?.trim();
+
+  if (target && !/^(chrome|google chrome|browser|google)$/i.test(target)) {
+    return target;
+  }
+
+  return (
+    process.env.LOCAL_BRIDGE_BROWSER_APP ||
+    process.env.COMPUTER_CONTROL_BROWSER_APP ||
+    "ChatGPT Atlas"
+  );
 };
 
 const trimBody = (body: string): string => {

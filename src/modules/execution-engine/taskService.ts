@@ -347,9 +347,11 @@ const normalizeDesktopTask = (task: DeveloperTask): DeveloperTask => {
     targetApp:
       task.targetApp ??
       (desktopMode === "local_shell"
-        ? "shell"
+          ? "shell"
         : desktopMode === "normal_chrome"
-          ? "Chrome"
+          ? process.env.LOCAL_BRIDGE_BROWSER_APP ||
+            process.env.COMPUTER_CONTROL_BROWSER_APP ||
+            "ChatGPT Atlas"
           : "any"),
     desktopMode,
     permissionRequired:

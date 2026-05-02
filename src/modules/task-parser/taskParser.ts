@@ -267,7 +267,7 @@ const inferTargetApp = (
   }
 
   const knownApps: Array<[RegExp, string]> = [
-    [/\bchrome|browser|google\b/i, "Chrome"],
+    [/\batlas|chatgpt atlas|chrome|browser|google\b/i, "ChatGPT Atlas"],
     [/\bfinder|downloads|documents|desktop|applications folder\b/i, "Finder"],
     [/\bterminal|shell\b/i, "Terminal"],
     [/\bsystem settings|settings app|system preferences\b/i, "System Settings"],
@@ -290,7 +290,7 @@ const inferTargetApp = (
     return titleCaseApp(openApp);
   }
 
-  return desktopMode === "normal_chrome" ? "Chrome" : "any";
+  return desktopMode === "normal_chrome" ? "ChatGPT Atlas" : "any";
 };
 
 const inferShellCommand = (utterance: string): string | undefined => {

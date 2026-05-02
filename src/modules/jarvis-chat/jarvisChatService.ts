@@ -92,7 +92,7 @@ const FALLBACK_REPLY =
   "I'm here. Normal conversation stays conversation. When you want me to move the system, start with task and I'll treat it like real work.";
 const CODEX_CASUAL_RECEIPT = "Got it. Thinking for a second.";
 const HELP_REPLY =
-  "I can chat through Telegram, SMS, and the website, check status, handle approvals, and use the Mac bridge for Chrome, Finder, apps, screenshots, and safe shell commands. Say task before executable work. Risky moves still stop at the gate.";
+  "I can chat through Telegram, SMS, and the website, check status, handle approvals, and use the Mac bridge for Atlas/browser work, Finder, apps, screenshots, and safe shell commands. Say task before executable work. Risky moves still stop at the gate.";
 const START_REPLY =
   "Back online. Talk normally, ask status, or say task when you want me to do the thing.";
 const STOP_REPLY =
@@ -104,7 +104,7 @@ const GREETING_REPLY =
 const IDENTITY_REPLY =
   "I'm Jarvis, Blake's engineering intelligence for CallAI, repo work, status checks, approvals, and Mac local-bridge operations. Calm mission control, slightly more caffeinated than the dashboard.";
 const COMPUTER_CONTROL_REPLY =
-  "Yes. I can operate the Mac through the local bridge: Chrome, Finder, visible apps, screenshots, and safe shell/file commands. Start with task when you want me to act. Risky moves still hit the approval gate.";
+  "Yes. I can operate the Mac through the local bridge: Atlas/browser work, Finder, visible apps, screenshots, and safe shell/file commands. Start with task when you want me to act. Risky moves still hit the approval gate.";
 const OPENCLAW_REPLY =
   "That's the intended shape: Telegram, SMS, and the website all feed one Jarvis thread, then I route real work into CallAI tasks, Codex-thread jobs, or the local bridge. Messaging app on the front, operator system underneath.";
 const SELF_ROUTING_REPLY =
@@ -920,7 +920,7 @@ const latestScreenshotReply = async (): Promise<string> => {
     return `Latest desktop state is task ${task.id.slice(-6)}: ${task.title}. ${label}. ${screenshotStatus}`;
   }
 
-  return "I do not have a desktop screenshot yet. Run a Mac/Chrome task and I'll pin the latest state to the dashboard.";
+  return "I do not have a desktop screenshot yet. Run a Mac or Atlas/browser task and I'll pin the latest state to the dashboard.";
 };
 
 const retryLatestReply = async (): Promise<{
