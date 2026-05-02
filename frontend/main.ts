@@ -227,6 +227,7 @@ type OverviewData = TaskListData & {
     latest_failure_reason: string | null;
     latest_failure_at: string | null;
     latest_failure_worker_id: string | null;
+    recent_failure_window_ms: number;
     timeout_age_ms: number | null;
   };
   runner: {

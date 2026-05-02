@@ -461,12 +461,22 @@ function latestActivityAt(
 function summarizeChatReplyQueue(
   jobs: JarvisChatReplyJobRecord[]
 ): Record<string, unknown> {
+  const now = Date.now();
+  const recentFailureWindowMs = Number(
+    process.env.JARVIS_CHAT_REPLY_FAILURE_RECENT_MS ?? 30 * 60 * 1000
+  );
   const queued = jobs.filter((job) => job.status === "queued");
   const running = jobs.filter((job) => job.status === "running");
-  const failures = jobs.filter((job) => job.status === "failed" || job.status === "expired");
+  const failures = jobs.filter((job) => {
+    if (job.status !== "failed" && job.status !== "expired") {
+      return false;
+    }
+
+    const failureAt = Date.parse(job.completed_at ?? job.updated_at);
+    return Number.isFinite(failureAt) && now - failureAt <= recentFailureWindowMs;
+  });
   const active = running[0] ?? queued[0] ?? null;
   const latestFailure = failures[0] ?? null;
-  const now = Date.now();
   const overdue = [...queued, ...running]
     .filter((job) => Date.parse(job.expires_at) < now)
     .sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at))[0];
@@ -478,9 +488,10 @@ function summarizeChatReplyQueue(
     active_job_id: active?.id ?? null,
     active_worker_id: active?.worker_id ?? null,
     oldest_queued_at: queued.at(-1)?.created_at ?? null,
-    latest_failure_reason: latestFailure?.error ?? null,
+    latest_failure_reason: summarizeFailureReason(latestFailure?.error),
     latest_failure_at: latestFailure?.completed_at ?? latestFailure?.updated_at ?? null,
     latest_failure_worker_id: latestFailure?.worker_id ?? null,
+    recent_failure_window_ms: recentFailureWindowMs,
     timeout_age_ms: overdue ? now - Date.parse(overdue.expires_at) : null
   };
 }
@@ -605,6 +616,28 @@ function jarvisState(
     active_task_title: task?.title ?? null,
     needs_attention: needsAttention
   };
+}
+
+function summarizeFailureReason(reason: string | null | undefined): string | null {
+  if (!reason) {
+    return null;
+  }
+
+  if (/codex exec/i.test(reason)) {
+    if (/Reading additional input from stdin/i.test(reason)) {
+      return "Codex CLI casual reply waited for input and failed before producing a final reply.";
+    }
+
+    return "Codex CLI casual reply command failed.";
+  }
+
+  return reason
+    .replace(/sk-[a-zA-Z0-9_-]{16,}/g, "[redacted API key]")
+    .replace(/[a-fA-F0-9]{32,}/g, "[redacted token]")
+    .split("\n")
+    .find((line) => line.trim().length > 0)
+    ?.trim()
+    .slice(0, 240) ?? null;
 }
 
 function stringField(value: unknown): string | null {
