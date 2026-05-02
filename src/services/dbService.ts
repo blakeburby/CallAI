@@ -712,6 +712,7 @@ export const database = {
   ): Promise<JarvisChatReplyJobRecord | null> {
     if (db) {
       const client = await db.connect();
+      let releaseError: Error | boolean | undefined;
 
       try {
         await client.query("begin");
@@ -747,10 +748,17 @@ export const database = {
         await client.query("commit");
         return claimed;
       } catch (error) {
-        await client.query("rollback");
+        releaseError = error instanceof Error ? error : true;
+        try {
+          await client.query("rollback");
+        } catch (rollbackError) {
+          logger.warn("Rollback after Jarvis chat reply claim failure failed", {
+            error: errorMessage(rollbackError)
+          });
+        }
         throw error;
       } finally {
-        client.release();
+        client.release(releaseError);
       }
     }
 

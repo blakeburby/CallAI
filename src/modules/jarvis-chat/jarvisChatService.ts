@@ -85,6 +85,7 @@ type JarvisIntent = z.infer<typeof jarvisIntentSchema>;
 
 const FALLBACK_REPLY =
   "I'm here. Talk normally, ask for status, or start a real command with task. That last word is the clutch so I don't accidentally start moving your Mac around because you were thinking out loud.";
+const CODEX_CASUAL_RECEIPT = "Got it. Thinking for a second.";
 const HELP_REPLY =
   "I can chat through Telegram, SMS, and the website; check status; handle approvals; and use the Mac bridge for Chrome, Finder, apps, screenshots, and safe shell commands. To queue work, start with task. Risky moves still stop for approval.";
 const START_REPLY =
@@ -171,6 +172,16 @@ export const jarvisChatService = {
         conversationId: conversation.id,
         inboundMessageId: inbound.id
       });
+      const receipt = await database.appendChatMessage({
+        conversation_id: conversation.id,
+        direction: "outbound",
+        role: "assistant",
+        body: CODEX_CASUAL_RECEIPT,
+        payload: {
+          intent: "queued_casual_reply_ack",
+          jarvis_chat_reply_job_id: job.id
+        }
+      });
 
       await auditLog.log({
         event_type: "jarvis.chat_handled",
@@ -185,7 +196,7 @@ export const jarvisChatService = {
       return {
         conversation,
         intent: "queued_casual_reply",
-        reply: "",
+        reply: receipt.body,
         casualReplyJobId: job.id,
         messages: await jarvisChatService.listMessages()
       };

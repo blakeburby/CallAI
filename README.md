@@ -63,7 +63,11 @@ existing normal Chrome desktop tasks.
 
 Set `JARVIS_CODEX_CHAT_ENABLED=true` to let Telegram casual messages use the
 local bridge's Codex CLI for delayed soul-style replies. Task execution still
-requires the explicit `task ...` trigger.
+requires the explicit `task ...` trigger. Casual replies use a fast Codex
+profile by default: `JARVIS_CODEX_CHAT_MODEL=gpt-5.4-mini`,
+`JARVIS_CODEX_CHAT_REASONING_EFFORT=low`,
+`JARVIS_CODEX_CHAT_TIMEOUT_MS=90000`, and
+`JARVIS_CODEX_CHAT_HISTORY_LIMIT=8`.
 
 For local bridge development without a build, use `npm run local-bridge:dev`.
 

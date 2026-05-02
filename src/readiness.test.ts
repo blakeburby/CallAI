@@ -24,6 +24,12 @@ const { telegramService } = await import("./modules/telegram/telegramService.js"
 const { jarvisCodexChatService } = await import(
   "./modules/jarvis-chat/jarvisCodexChatService.js"
 );
+const { __jarvisCodexChatInternals } = await import(
+  "./modules/jarvis-chat/jarvisCodexChatService.js"
+);
+const { JARVIS_SOUL_PROMPT } = await import(
+  "./modules/jarvis-chat/jarvisSoul.js"
+);
 const {
   classifyComputerInstructionRisk,
   classifyShellCommandRisk,
@@ -424,7 +430,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     assert.equal(acceptedPayload.success, true);
     assert.equal(acceptedPayload.accepted, true);
     assert.equal(acceptedPayload.task_id, null);
-    assert.equal(acceptedPayload.reply, "");
+    assert.equal(acceptedPayload.reply, "Got it. Thinking for a second.");
     assert.ok(acceptedPayload.queued_reply_job_id);
     assert.equal(await taskCount(), beforeOwnerTasks);
 
@@ -443,7 +449,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     assert.equal(contextPayload.success, true);
     assert.equal(contextPayload.accepted, true);
     assert.equal(contextPayload.task_id, null);
-    assert.equal(contextPayload.reply, "");
+    assert.equal(contextPayload.reply, "Got it. Thinking for a second.");
     assert.ok(contextPayload.queued_reply_job_id);
 
     const joke = await fetch(`${baseUrl}/telegram/webhook`, {
@@ -459,7 +465,7 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
     assert.equal(jokePayload.success, true);
     assert.equal(jokePayload.accepted, true);
     assert.equal(jokePayload.task_id, null);
-    assert.equal(jokePayload.reply, "");
+    assert.equal(jokePayload.reply, "Got it. Thinking for a second.");
     assert.ok(jokePayload.queued_reply_job_id);
 
     assert.equal(
@@ -715,6 +721,131 @@ test("telegram webhook rejects non-owner users and accepts owner chat", async ()
   });
 });
 
+test("Jarvis Codex casual replies use fast runtime config and compact context", () => {
+  const previousModel = process.env.JARVIS_CODEX_CHAT_MODEL;
+  const previousEffort = process.env.JARVIS_CODEX_CHAT_REASONING_EFFORT;
+  delete process.env.JARVIS_CODEX_CHAT_MODEL;
+  delete process.env.JARVIS_CODEX_CHAT_REASONING_EFFORT;
+
+  try {
+    const runtimeConfig = __jarvisCodexChatInternals.buildRuntimeConfig();
+    assert.deepEqual(runtimeConfig, {
+      model: "gpt-5.4-mini",
+      reasoningEffort: "low"
+    });
+
+    const args = __jarvisCodexChatInternals.buildCodexExecArgs({
+      outputPath: "/tmp/jarvis-reply.txt",
+      repoPath: "/tmp/callai",
+      runtimeConfig
+    });
+    assert.deepEqual(args.slice(0, 2), ["exec", "--ephemeral"]);
+    assert.ok(args.includes("-m"));
+    assert.equal(args[args.indexOf("-m") + 1], "gpt-5.4-mini");
+    assert.equal(
+      args[args.indexOf("-c") + 1],
+      'model_reasoning_effort="low"'
+    );
+    assert.equal(args.at(-1), "-");
+  } finally {
+    if (previousModel === undefined) {
+      delete process.env.JARVIS_CODEX_CHAT_MODEL;
+    } else {
+      process.env.JARVIS_CODEX_CHAT_MODEL = previousModel;
+    }
+    if (previousEffort === undefined) {
+      delete process.env.JARVIS_CODEX_CHAT_REASONING_EFFORT;
+    } else {
+      process.env.JARVIS_CODEX_CHAT_REASONING_EFFORT = previousEffort;
+    }
+  }
+});
+
+test("Jarvis Codex casual prompt excludes noisy fallback history", () => {
+  const history = [
+    {
+      id: "history-user-1",
+      conversation_id: "conversation-1",
+      task_id: null,
+      direction: "inbound",
+      role: "user",
+      body: "what's up",
+      provider_message_id: null,
+      payload: {},
+      created_at: new Date(0).toISOString()
+    },
+    {
+      id: "history-ack-1",
+      conversation_id: "conversation-1",
+      task_id: null,
+      direction: "outbound",
+      role: "assistant",
+      body: "Got it. Thinking for a second.",
+      provider_message_id: null,
+      payload: { intent: "queued_casual_reply_ack" },
+      created_at: new Date(1).toISOString()
+    },
+    {
+      id: "history-fallback-1",
+      conversation_id: "conversation-1",
+      task_id: null,
+      direction: "outbound",
+      role: "assistant",
+      body: "I hit a snag generating the sharper reply.",
+      provider_message_id: null,
+      payload: { intent: "codex_casual_reply_failed" },
+      created_at: new Date(2).toISOString()
+    },
+    {
+      id: "latest",
+      conversation_id: "conversation-1",
+      task_id: null,
+      direction: "inbound",
+      role: "user",
+      body: "yo",
+      provider_message_id: null,
+      payload: {},
+      created_at: new Date(3).toISOString()
+    }
+  ] as const;
+  const prompt = __jarvisCodexChatInternals.buildCodexCasualPrompt({
+    conversation: {
+      id: "conversation-1",
+      channel_id: "channel-1",
+      scope: "default",
+      status: "active",
+      title: "Jarvis",
+      last_message_at: new Date(3).toISOString(),
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(3).toISOString()
+    },
+    history: [...history],
+    inboundMessage: history[3],
+    job: {
+      id: "job-1",
+      conversation_id: "conversation-1",
+      inbound_message_id: "latest",
+      status: "running",
+      worker_id: "test",
+      claimed_at: new Date(3).toISOString(),
+      completed_at: null,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      reply_body: null,
+      error: null,
+      created_at: new Date(3).toISOString(),
+      updated_at: new Date(3).toISOString()
+    }
+  });
+
+  assert.ok(prompt.length <= 8000);
+  assert.ok(!prompt.includes(JARVIS_SOUL_PROMPT));
+  assert.ok(!prompt.includes("## Domain Knowledge"));
+  assert.ok(prompt.includes("Blake: what's up"));
+  assert.ok(prompt.includes("Blake's latest message: yo"));
+  assert.ok(!prompt.includes("Thinking for a second"));
+  assert.ok(!prompt.includes("hit a snag"));
+});
+
 test("Codex-backed Jarvis chat reply jobs expire with one fallback", async () => {
   const channel = await database.upsertChatChannel({
     kind: "telegram",
@@ -757,7 +888,7 @@ test("Codex-backed Jarvis chat reply jobs expire with one fallback", async () =>
   });
   assert.equal(
     messagesAfterFirstPass.filter((message) =>
-      /snag generating the sharper reply/i.test(message.body)
+      /sharper reply path tripped/i.test(message.body)
     ).length,
     1
   );
@@ -772,10 +903,155 @@ test("Codex-backed Jarvis chat reply jobs expire with one fallback", async () =>
   });
   assert.equal(
     messagesAfterSecondPass.filter((message) =>
-      /snag generating the sharper reply/i.test(message.body)
+      /sharper reply path tripped/i.test(message.body)
     ).length,
     1
   );
+});
+
+test("failed Jarvis Codex casual replies send one human fallback", async () => {
+  const channel = await database.upsertChatChannel({
+    kind: "telegram",
+    external_id: "failed-codex-chat",
+    display_name: "Telegram Failed Codex Test"
+  });
+  const conversation = await database.upsertChatConversation({
+    channel_id: channel.id,
+    title: "Jarvis"
+  });
+  const inbound = await database.appendChatMessage({
+    conversation_id: conversation.id,
+    direction: "inbound",
+    role: "user",
+    body: "yo",
+    provider_message_id: "failed-codex-1"
+  });
+  const job = await database.createJarvisChatReplyJob({
+    conversation_id: conversation.id,
+    inbound_message_id: inbound.id,
+    expires_at: new Date(Date.now() + 60_000).toISOString()
+  });
+
+  const processed = await jarvisCodexChatService.processNext({
+    runnerId: "test-failed-codex",
+    expireJobs: async () => [],
+    generateReply: async () => {
+      throw new Error("simulated Codex timeout");
+    }
+  });
+  assert.equal(processed, true);
+
+  const failed = (await database.listJarvisChatReplyJobs()).find(
+    (item) => item.id === job.id
+  );
+  assert.equal(failed?.status, "failed");
+  assert.match(failed?.error ?? "", /simulated Codex timeout/);
+
+  const messages = await database.listChatMessages({
+    conversation_id: conversation.id,
+    limit: 20
+  });
+  const fallbacks = messages.filter((message) =>
+    /sharper reply path tripped/i.test(message.body)
+  );
+  assert.equal(fallbacks.length, 1);
+  assert.doesNotMatch(fallbacks[0].body, /\btask\b/i);
+});
+
+test("Jarvis chat reply worker still claims jobs when expiry check fails", async () => {
+  const channel = await database.upsertChatChannel({
+    kind: "telegram",
+    external_id: "expiry-failure-chat",
+    display_name: "Telegram Expiry Failure Test"
+  });
+  const conversation = await database.upsertChatConversation({
+    channel_id: channel.id,
+    title: "Jarvis"
+  });
+  const inbound = await database.appendChatMessage({
+    conversation_id: conversation.id,
+    direction: "inbound",
+    role: "user",
+    body: "you awake?",
+    provider_message_id: "expiry-failure-1"
+  });
+  const job = await database.createJarvisChatReplyJob({
+    conversation_id: conversation.id,
+    inbound_message_id: inbound.id,
+    expires_at: new Date(Date.now() + 60_000).toISOString()
+  });
+  let expiryAttempts = 0;
+
+  const processed = await jarvisCodexChatService.processNext({
+    runnerId: "test-expiry-failure",
+    expireJobs: async () => {
+      expiryAttempts += 1;
+      throw new Error("expire Jarvis chat reply jobs failed: read ETIMEDOUT");
+    },
+    generateReply: async ({ inboundMessage }) =>
+      `Still here. Replying to: ${inboundMessage.body}`
+  });
+
+  assert.equal(processed, true);
+  assert.equal(expiryAttempts, 2);
+  const claimed = (await database.listJarvisChatReplyJobs()).find(
+    (item) => item.id === job.id
+  );
+  assert.equal(claimed?.status, "succeeded");
+
+  const messages = await database.listChatMessages({
+    conversation_id: conversation.id,
+    limit: 20
+  });
+  assert.ok(
+    messages.some((message) => /Still here\. Replying to: you awake\?/i.test(message.body))
+  );
+});
+
+test("Jarvis chat reply worker retries transient claim failures", async () => {
+  const channel = await database.upsertChatChannel({
+    kind: "telegram",
+    external_id: "claim-retry-chat",
+    display_name: "Telegram Claim Retry Test"
+  });
+  const conversation = await database.upsertChatConversation({
+    channel_id: channel.id,
+    title: "Jarvis"
+  });
+  const inbound = await database.appendChatMessage({
+    conversation_id: conversation.id,
+    direction: "inbound",
+    role: "user",
+    body: "claim retry check",
+    provider_message_id: "claim-retry-1"
+  });
+  const job = await database.createJarvisChatReplyJob({
+    conversation_id: conversation.id,
+    inbound_message_id: inbound.id,
+    expires_at: new Date(Date.now() + 60_000).toISOString()
+  });
+  let claimAttempts = 0;
+
+  const processed = await jarvisCodexChatService.processNext({
+    runnerId: "test-claim-retry",
+    expireJobs: async () => [],
+    claimNextJob: async (runnerId, timeoutMs) => {
+      claimAttempts += 1;
+      if (claimAttempts === 1) {
+        throw new Error("Client has encountered a connection error and is not queryable");
+      }
+      return database.claimNextJarvisChatReplyJob(runnerId, timeoutMs);
+    },
+    generateReply: async ({ inboundMessage }) =>
+      `Claim recovered. Replying to: ${inboundMessage.body}`
+  });
+
+  assert.equal(processed, true);
+  assert.equal(claimAttempts, 2);
+  const claimed = (await database.listJarvisChatReplyJobs()).find(
+    (item) => item.id === job.id
+  );
+  assert.equal(claimed?.status, "succeeded");
 });
 
 test("sms chat delegates message interpretation to the shared Jarvis service", async () => {
