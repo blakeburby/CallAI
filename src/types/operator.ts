@@ -341,8 +341,22 @@ export type JarvisChatMessageView = ChatMessageRecord & {
   channel_display_name: string;
   task?: Pick<
     DeveloperTaskRecord,
-    "id" | "title" | "status" | "normalized_action" | "execution_target" | "updated_at"
-  >;
+    | "id"
+    | "title"
+    | "status"
+    | "normalized_action"
+    | "execution_target"
+    | "permission_required"
+    | "updated_at"
+  > & {
+    latest_event_at: string | null;
+    latest_event_label: string | null;
+    latest_event_type: string | null;
+    latest_summary: string | null;
+    pending_confirmation_id: string | null;
+    pending_confirmation_risk: string | null;
+    has_desktop_snapshot: boolean;
+  };
 };
 
 export type CreateTaskInput = {

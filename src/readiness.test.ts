@@ -357,6 +357,85 @@ test("operator chat shares Jarvis history and only creates tasks for task reques
     assert.equal(latestPayload.success, true);
     assert.equal(latestPayload.data.task_id, null);
     assert.match(latestPayload.data.reply, /task|inspect this repo/i);
+
+    await database.upsertDesktopSnapshot({
+      task_id: taskPayload.data.task_id,
+      run_id: null,
+      current_url: "screen://test",
+      page_title: "Test desktop",
+      latest_action: "Observed the test desktop state",
+      step: 1,
+      screenshot_data_url: "data:image/png;base64,dGVzdA==",
+      redacted: false
+    });
+
+    const screenshot = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({ message: "show latest screenshot" }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(screenshot.status, 200);
+    const screenshotPayload = await screenshot.json();
+    assert.equal(screenshotPayload.success, true);
+    assert.equal(screenshotPayload.data.task_id, null);
+    assert.match(screenshotPayload.data.reply, /Latest desktop state|screenshot/i);
+
+    const failedTask = await database.createTask({
+      execution_target: "runner",
+      normalized_action: "inspect_repo",
+      permission_required: "read_only",
+      raw_request: "Inspect failed test task",
+      status: "failed",
+      structured_request: {
+        acceptanceCriteria: [],
+        action: "inspect_repo",
+        branchPolicy: "new_branch_required",
+        confidence: 0.9,
+        instructions: "Inspect failed test task",
+        permissionRequired: "read_only",
+        title: "Inspect failed test task"
+      },
+      title: "Inspect failed test task"
+    });
+    const beforeRetryCount = await taskCount();
+    const retry = await fetch(`${baseUrl}/operator/chat/messages`, {
+      body: JSON.stringify({ message: "retry that" }),
+      headers: {
+        "Content-Type": "application/json",
+        cookie
+      },
+      method: "POST"
+    });
+    assert.equal(retry.status, 200);
+    const retryPayload = await retry.json();
+    assert.equal(retryPayload.success, true);
+    assert.equal(retryPayload.data.task_id, failedTask.id);
+    assert.match(retryPayload.data.reply, /Queued again|requeued|another swing/i);
+    assert.equal((await database.getTask(failedTask.id))?.status, "queued");
+    assert.equal(await taskCount(), beforeRetryCount);
+
+    const overview = await fetch(`${baseUrl}/operator/overview`, {
+      headers: { cookie }
+    });
+    assert.equal(overview.status, 200);
+    const overviewPayload = await overview.json();
+    assert.equal(overviewPayload.success, true);
+    assert.ok(overviewPayload.data.jarvis_state.state);
+    assert.ok("chat_reply_queue" in overviewPayload.data);
+    assert.ok("bridge_offline" in overviewPayload.data.runner);
+
+    const refreshedChat = await fetch(`${baseUrl}/operator/chat/messages`, {
+      headers: { cookie }
+    });
+    assert.equal(refreshedChat.status, 200);
+    const refreshedChatPayload = await refreshedChat.json();
+    const hydratedTask = refreshedChatPayload.data.messages
+      .map((message: { task?: { id: string; has_desktop_snapshot?: boolean } }) => message.task)
+      .find((item: { id: string } | undefined) => item?.id === taskPayload.data.task_id);
+    assert.equal(hydratedTask?.has_desktop_snapshot, true);
   });
 });
 

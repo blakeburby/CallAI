@@ -20,12 +20,16 @@ const runnerId =
   process.env.RUNNER_ID ||
   `runner-${process.env.HOSTNAME || "local"}-${process.pid}`;
 const pollIntervalMs = Number(process.env.RUNNER_POLL_INTERVAL_MS ?? 5000);
+const heartbeatIntervalMs = Number(
+  process.env.RUNNER_HEARTBEAT_AUDIT_INTERVAL_MS ?? 60_000
+);
 const taskScope = parseTaskScope(process.env.RUNNER_TASK_SCOPE);
 const desktopControlEnabled = isDesktopControlEnabled(runnerId);
 const fullComputerControlEnabled = isFullComputerControlEnabled();
 
 let stopping = false;
 let healthServer: Server | null = null;
+let lastHeartbeatAuditAt = 0;
 
 const main = async (): Promise<void> => {
   logger.info("CallAI agent runner starting", {
@@ -49,9 +53,12 @@ const main = async (): Promise<void> => {
       full_computer_control: fullComputerControlEnabled
     }
   });
+  await logRunnerHeartbeat(true);
 
   while (!stopping) {
     try {
+      await logRunnerHeartbeat();
+
       if (jarvisCodexChatService.isEnabled()) {
         const processedChatReply = await jarvisCodexChatService.processNext({
           runnerId
@@ -118,6 +125,35 @@ const main = async (): Promise<void> => {
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+const logRunnerHeartbeat = async (force = false): Promise<void> => {
+  const now = Date.now();
+
+  if (!force && now - lastHeartbeatAuditAt < heartbeatIntervalMs) {
+    return;
+  }
+
+  lastHeartbeatAuditAt = now;
+
+  try {
+    await auditLog.log({
+      event_type: "runner.heartbeat",
+      payload: {
+        runner_id: runnerId,
+        task_scope: taskScope,
+        desktop_control: desktopControlEnabled,
+        full_computer_control: fullComputerControlEnabled,
+        chat_routing: "deterministic",
+        model_execution: "codex_cli",
+        poll_interval_ms: pollIntervalMs
+      }
+    });
+  } catch (error) {
+    logger.warn("Runner heartbeat audit failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+};
 
 const startHealthServer = (): Server | null => {
   if (process.env.RUNNER_DISABLE_HEALTH_SERVER === "true") {

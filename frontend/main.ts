@@ -118,8 +118,22 @@ type ChatMessage = {
   channel_display_name: string;
   task?: Pick<
     TaskRecord,
-    "id" | "title" | "status" | "normalized_action" | "execution_target" | "updated_at"
-  >;
+    | "id"
+    | "title"
+    | "status"
+    | "normalized_action"
+    | "execution_target"
+    | "permission_required"
+    | "updated_at"
+  > & {
+    latest_event_at: string | null;
+    latest_event_label: string | null;
+    latest_event_type: string | null;
+    latest_summary: string | null;
+    pending_confirmation_id: string | null;
+    pending_confirmation_risk: string | null;
+    has_desktop_snapshot: boolean;
+  };
 };
 
 type AuditEvent = {
@@ -188,12 +202,44 @@ type TaskListData = {
 
 type OverviewData = TaskListData & {
   counts: Record<string, number>;
+  jarvis_state: {
+    state:
+      | "online"
+      | "thinking"
+      | "working"
+      | "waiting_for_approval"
+      | "stuck"
+      | "bridge_offline"
+      | "degraded";
+    headline: string;
+    detail: string;
+    active_task_id: string | null;
+    active_task_title: string | null;
+    needs_attention: boolean;
+  };
+  chat_reply_queue: {
+    queued_count: number;
+    running_count: number;
+    failed_recent_count: number;
+    active_job_id: string | null;
+    active_worker_id: string | null;
+    oldest_queued_at: string | null;
+    latest_failure_reason: string | null;
+    latest_failure_at: string | null;
+    latest_failure_worker_id: string | null;
+    timeout_age_ms: number | null;
+  };
   runner: {
     status: string;
     runner_id: string | null;
     task_scope: string | null;
     last_event_type: string | null;
     last_seen_at: string | null;
+    last_heartbeat_at: string | null;
+    heartbeat_age_ms: number | null;
+    heartbeat_stale_after_ms: number;
+    bridge_offline: boolean;
+    queued_runner_count: number;
     active_task_id: string | null;
     active_task_title: string | null;
   };
@@ -344,6 +390,8 @@ type VapiConstructor = new (apiToken: string) => VapiClient;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 let refreshTimer: number | null = null;
+let pollingActive = false;
+let refreshInFlight = false;
 let vapiConstructorPromise: Promise<VapiConstructor> | null = null;
 
 if (!app) {
@@ -667,9 +715,11 @@ const toggleMute = (): void => {
 };
 
 const refreshOperatorData = async (): Promise<void> => {
-  if (!state.config) {
+  if (!state.config || refreshInFlight) {
     return;
   }
+
+  refreshInFlight = true;
 
   try {
     const [overview, smsHealth, data, chat] = await Promise.all([
@@ -715,6 +765,11 @@ const refreshOperatorData = async (): Promise<void> => {
   } catch (error) {
     state.error = getErrorMessage(error);
     render();
+  } finally {
+    refreshInFlight = false;
+    if (pollingActive) {
+      scheduleNextRefresh();
+    }
   }
 };
 
@@ -887,17 +942,18 @@ const decideConfirmation = async (
   }
 };
 
-const cancelSelectedTask = async (): Promise<void> => {
-  if (!state.selectedTaskId) {
+const cancelSelectedTask = async (taskId = state.selectedTaskId): Promise<void> => {
+  if (!taskId) {
     return;
   }
 
   try {
-    await request(`/operator/tasks/${encodeURIComponent(state.selectedTaskId)}/cancel`, {
+    state.selectedTaskId = taskId;
+    await request(`/operator/tasks/${encodeURIComponent(taskId)}/cancel`, {
       method: "POST",
       body: JSON.stringify({ reason: "Cancelled from operator console." })
     });
-    addLog("Task cancelled", state.selectedTaskId, "warn");
+    addLog("Task cancelled", taskId, "warn");
     await refreshOperatorData();
   } catch (error) {
     state.error = getErrorMessage(error);
@@ -905,20 +961,21 @@ const cancelSelectedTask = async (): Promise<void> => {
   }
 };
 
-const continueSelectedTask = async (): Promise<void> => {
-  if (!state.selectedTaskId) {
+const continueSelectedTask = async (taskId = state.selectedTaskId): Promise<void> => {
+  if (!taskId) {
     return;
   }
 
   try {
+    state.selectedTaskId = taskId;
     await request(
-      `/operator/tasks/${encodeURIComponent(state.selectedTaskId)}/continue`,
+      `/operator/tasks/${encodeURIComponent(taskId)}/continue`,
       {
         method: "POST",
         body: JSON.stringify({})
       }
     );
-    addLog("Task queued again", state.selectedTaskId, "success");
+    addLog("Task queued again", taskId, "success");
     await refreshOperatorData();
   } catch (error) {
     state.error = getErrorMessage(error);
@@ -928,21 +985,66 @@ const continueSelectedTask = async (): Promise<void> => {
 
 const startPolling = (): void => {
   stopPolling();
-  refreshTimer = window.setInterval(() => {
-    void refreshOperatorData();
-  }, 6000);
+  pollingActive = true;
+  scheduleNextRefresh(1500);
 };
 
 const stopPolling = (): void => {
+  pollingActive = false;
   if (refreshTimer !== null) {
-    window.clearInterval(refreshTimer);
+    window.clearTimeout(refreshTimer);
     refreshTimer = null;
   }
 };
 
+const scheduleNextRefresh = (delayMs = nextRefreshDelayMs()): void => {
+  if (!pollingActive) {
+    return;
+  }
+
+  if (refreshTimer !== null) {
+    window.clearTimeout(refreshTimer);
+  }
+
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null;
+    void refreshOperatorData();
+  }, delayMs);
+};
+
+const nextRefreshDelayMs = (): number => {
+  if (document.hidden) {
+    return 30_000;
+  }
+
+  const jarvisState = state.overview?.jarvis_state.state;
+  const active =
+    Boolean(jarvisState && jarvisState !== "online") ||
+    Boolean(state.confirmations.length) ||
+    Boolean(
+      state.overview &&
+        (state.overview.chat_reply_queue.queued_count > 0 ||
+          state.overview.chat_reply_queue.running_count > 0)
+    );
+
+  return active ? 2000 : 9000;
+};
+
 const render = (): void => {
+  const previousChatThread = document.querySelector<HTMLElement>(".chat-thread");
+  const stickToBottom = previousChatThread
+    ? previousChatThread.scrollTop + previousChatThread.clientHeight >=
+      previousChatThread.scrollHeight - 80
+    : true;
   app.innerHTML = state.config ? renderDashboard() : renderLocked();
   bindEvents();
+
+  if (stickToBottom) {
+    const nextChatThread = document.querySelector<HTMLElement>(".chat-thread");
+    if (nextChatThread) {
+      nextChatThread.scrollTop = nextChatThread.scrollHeight;
+    }
+  }
 };
 
 const renderLocked = (): string => `
@@ -973,10 +1075,10 @@ const renderDashboard = (): string => `
       </div>
 
       <section class="header-status" aria-label="Current Jarvis state">
-        <span class="status-chip ${state.muted ? "muted" : ""}">${escapeHtml(formatStatus(state.status))}</span>
+        <span class="status-chip ${state.muted ? "muted" : ""}">${escapeHtml(jarvisStateLabel())}</span>
         <div>
           <strong>${escapeHtml(primaryRuntimeStatus())}</strong>
-          <p>${escapeHtml(state.statusDetail)}</p>
+          <p>${escapeHtml(state.overview?.jarvis_state.detail ?? state.statusDetail)}</p>
         </div>
       </section>
 
@@ -1002,6 +1104,7 @@ const renderDashboard = (): string => `
 
     ${state.error ? `<div class="notice error-text">${escapeHtml(state.error)}</div>` : ""}
 
+    ${renderJarvisStatePanel()}
     ${renderOperatorSections()}
   </main>
 `;
@@ -1104,6 +1207,29 @@ const renderOperatorSections = (): string => `
   </section>
 `;
 
+const renderJarvisStatePanel = (): string => {
+  const snapshot = state.overview?.jarvis_state;
+  const replyQueue = state.overview?.chat_reply_queue;
+  const runner = state.overview?.runner;
+  const tone = jarvisStateTone();
+
+  return `
+    <section class="jarvis-state-panel ${tone}" aria-label="Jarvis state">
+      <div>
+        <p class="section-label">Jarvis State</p>
+        <h2>${escapeHtml(snapshot?.headline ?? primaryRuntimeStatus())}</h2>
+        <p>${escapeHtml(snapshot?.detail ?? "Loading the operator picture.")}</p>
+      </div>
+      <dl>
+        <div><dt>Active task</dt><dd>${escapeHtml(snapshot?.active_task_title ?? "None")}</dd></div>
+        <div><dt>Bridge heartbeat</dt><dd>${escapeHtml(runner?.last_heartbeat_at ? formatTime(runner.last_heartbeat_at) : "No heartbeat yet")}</dd></div>
+        <div><dt>Chat replies</dt><dd>${escapeHtml(`${replyQueue?.running_count ?? 0} running / ${replyQueue?.queued_count ?? 0} queued`)}</dd></div>
+        <div><dt>Needs attention</dt><dd>${escapeHtml(snapshot?.needs_attention ? "Yes" : "No")}</dd></div>
+      </dl>
+    </section>
+  `;
+};
+
 const renderChatSection = (): string => `
   <section class="panel chat-panel operator-chat-section" aria-label="Jarvis chat">
     <div class="panel-heading">
@@ -1121,7 +1247,7 @@ const renderChatSection = (): string => `
       }
     </div>
     <form id="chat-form" class="chat-form">
-      <textarea name="message" rows="3" placeholder="Message Jarvis: open Finder, run ls on Desktop, inspect the repo, check status, approve, deny, or continue a task.">${escapeHtml(state.chatDraft)}</textarea>
+      <textarea name="message" rows="3" placeholder="Message Jarvis. Use task open Finder..., task run ls on Desktop, or ask what happened/status/approve/deny.">${escapeHtml(state.chatDraft)}</textarea>
       <div class="chat-form-row">
         <input name="repo_hint" value="${escapeHtml(state.repoHint)}" placeholder="target: main repo / Mac / Chrome" />
         <button class="primary" type="submit" ${state.chatBusy ? "disabled" : ""}>Send</button>
@@ -1149,6 +1275,7 @@ const renderBackendConfigSection = (): string => `
         <span>${escapeHtml(lastActivityLabel())}</span>
       </div>
       <section class="system-strip backend-system-strip" aria-label="Backend status cards">
+        ${renderSystemPill("JARVIS", jarvisStateLabel(), state.overview?.jarvis_state.detail ?? "Loading state.", jarvisStateTone())}
         ${renderSystemPill("VOICE", formatStatus(state.status), state.statusDetail, statusTone(state.status))}
         ${renderSystemPill("SMS", smsStatusLabel(), smsStatusDetail(), smsTone())}
         ${renderSystemPill("VAPI", shortId(state.config?.assistantId ?? ""), state.config?.backendUrl ?? "", state.vapi ? "ok" : "warn")}
@@ -1221,6 +1348,8 @@ const renderConfigSnapshot = (): string => {
       <div><dt>Codex Waiting</dt><dd>${escapeHtml(String(codex?.waiting_count ?? 0))}</dd></div>
       <div><dt>Local Bridge Runner</dt><dd>${escapeHtml(runner?.runner_id ?? "No recent runner id")}</dd></div>
       <div><dt>Runner Scope</dt><dd>${escapeHtml(runner?.task_scope ? formatLabel(runner.task_scope) : "Unknown")}</dd></div>
+      <div><dt>Runner Heartbeat</dt><dd>${escapeHtml(runner?.last_heartbeat_at ? formatTime(runner.last_heartbeat_at) : "No heartbeat yet")}</dd></div>
+      <div><dt>Chat Reply Queue</dt><dd>${escapeHtml(`${overview?.chat_reply_queue.running_count ?? 0} running / ${overview?.chat_reply_queue.queued_count ?? 0} queued / ${overview?.chat_reply_queue.failed_recent_count ?? 0} failed`)}</dd></div>
       <div><dt>Database</dt><dd>${escapeHtml(overview?.database.message ?? "Not loaded")}</dd></div>
       <div><dt>Last Activity</dt><dd>${escapeHtml(lastActivityLabel())}</dd></div>
     </dl>
@@ -1319,6 +1448,10 @@ const renderAttentionBanner = (): string => {
     items.push(`${state.confirmations.length} approval${state.confirmations.length === 1 ? "" : "s"} waiting.`);
   }
 
+  if (state.overview?.jarvis_state.needs_attention) {
+    items.push(state.overview.jarvis_state.detail);
+  }
+
   if (
     state.tasks.some(
       (task) => task.status === "queued" && task.execution_target === "runner"
@@ -1336,6 +1469,10 @@ const renderAttentionBanner = (): string => {
 
   if (state.overview?.codex_thread.stale) {
     items.push("A Codex chat task has been waiting longer than expected.");
+  }
+
+  if (state.overview?.chat_reply_queue.latest_failure_reason) {
+    items.push(`Latest chat reply issue: ${state.overview.chat_reply_queue.latest_failure_reason}`);
   }
 
   if (!state.smsHealth?.summary.configured) {
@@ -1428,11 +1565,38 @@ const renderChatMessage = (message: ChatMessage): string => {
 };
 
 const renderChatTaskCard = (task: NonNullable<ChatMessage["task"]>): string => `
-  <button class="chat-task-card" data-task-id="${escapeHtml(task.id)}" type="button">
-    <span class="badge ${escapeHtml(task.status)}">${escapeHtml(formatLabel(task.status))}</span>
-    <strong>${escapeHtml(task.title)}</strong>
-    <small>${escapeHtml(formatLabel(task.normalized_action))} · ${escapeHtml(formatLabel(task.execution_target))}</small>
-  </button>
+  <article class="chat-task-card">
+    <button class="chat-task-select" data-task-id="${escapeHtml(task.id)}" type="button">
+      <span class="badge ${escapeHtml(task.status)}">${escapeHtml(formatLabel(task.status))}</span>
+      <strong>${escapeHtml(task.title)}</strong>
+      <small>${escapeHtml(formatLabel(task.normalized_action))} · ${escapeHtml(formatLabel(task.execution_target))} · ${escapeHtml(formatLabel(task.permission_required))}</small>
+      ${
+        task.latest_event_label
+          ? `<em>${escapeHtml(task.latest_event_label)}${task.latest_event_at ? ` · ${escapeHtml(formatTime(task.latest_event_at))}` : ""}</em>`
+          : ""
+      }
+      ${task.latest_summary ? `<p>${escapeHtml(task.latest_summary)}</p>` : ""}
+      ${
+        task.pending_confirmation_id
+          ? `<span class="task-card-warning">Approval: ${escapeHtml(task.pending_confirmation_risk ?? "review required")}</span>`
+          : ""
+      }
+      ${task.has_desktop_snapshot ? '<span class="task-card-note">Screenshot/state available</span>' : ""}
+    </button>
+    <div class="chat-task-actions">
+      <button data-task-id="${escapeHtml(task.id)}" data-chat-task-action="select" type="button">Open</button>
+      ${
+        task.pending_confirmation_id
+          ? `
+            <button data-confirmation-id="${escapeHtml(task.pending_confirmation_id)}" data-decision="approved" type="button">Approve</button>
+            <button data-confirmation-id="${escapeHtml(task.pending_confirmation_id)}" data-decision="denied" type="button">Deny</button>
+          `
+          : ""
+      }
+      <button data-task-id="${escapeHtml(task.id)}" data-chat-task-action="continue" type="button" ${task.status === "running" || task.status === "succeeded" ? "disabled" : ""}>Retry</button>
+      <button data-task-id="${escapeHtml(task.id)}" data-chat-task-action="cancel" type="button" ${task.status === "cancelled" || task.status === "succeeded" ? "disabled" : ""}>Cancel</button>
+    </div>
+  </article>
 `;
 
 const renderTaskRow = (task: TaskRecord): string => {
@@ -1862,7 +2026,7 @@ const bindEvents = (): void => {
     });
   });
 
-  document.querySelectorAll<HTMLButtonElement>(".task-row,.chat-task-card").forEach((button) => {
+  document.querySelectorAll<HTMLButtonElement>(".task-row,.chat-task-select").forEach((button) => {
     button.addEventListener("click", () => {
       const taskId = button.dataset.taskId;
       if (taskId) {
@@ -1870,6 +2034,27 @@ const bindEvents = (): void => {
       }
     });
   });
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-chat-task-action][data-task-id]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const taskId = button.dataset.taskId;
+        const action = button.dataset.chatTaskAction;
+
+        if (!taskId) {
+          return;
+        }
+
+        if (action === "select") {
+          void selectTask(taskId);
+        } else if (action === "continue") {
+          void continueSelectedTask(taskId);
+        } else if (action === "cancel") {
+          void cancelSelectedTask(taskId);
+        }
+      });
+    });
 
   document.querySelectorAll<HTMLButtonElement>("[data-quick-task]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1993,6 +2178,10 @@ const approvalDetail = (): string => {
 };
 
 const primaryRuntimeStatus = (): string => {
+  if (state.overview?.jarvis_state.headline) {
+    return state.overview.jarvis_state.headline;
+  }
+
   const queuedRunner = state.tasks.filter(
     (task) => task.status === "queued" && task.execution_target === "runner"
   ).length;
@@ -2011,6 +2200,29 @@ const primaryRuntimeStatus = (): string => {
   }
 
   return "Ready for Telegram, website chat, SMS, and local bridge work";
+};
+
+const jarvisStateLabel = (): string => {
+  const value = state.overview?.jarvis_state.state;
+  return value ? formatLabel(value) : formatStatus(state.status);
+};
+
+const jarvisStateTone = (): UiTone => {
+  switch (state.overview?.jarvis_state.state) {
+    case "online":
+      return "ok";
+    case "thinking":
+    case "working":
+      return "active";
+    case "waiting_for_approval":
+      return "warn";
+    case "stuck":
+    case "bridge_offline":
+    case "degraded":
+      return "danger";
+    default:
+      return statusTone(state.status);
+  }
 };
 
 const lastActivityLabel = (): string => {
@@ -2152,6 +2364,10 @@ const runnerStatusLabel = (): string => {
     (item) => item.status === "running" && item.execution_target === "runner"
   );
 
+  if (runner?.bridge_offline) {
+    return "Offline";
+  }
+
   if (task) {
     return runner?.runner_id || "Running";
   }
@@ -2189,8 +2405,16 @@ const runnerStatusDetail = (): string => {
     return `${queued} queued task${queued === 1 ? "" : "s"} ready for pickup.`;
   }
 
+  if (runner?.bridge_offline) {
+    return "Heartbeat is stale or the bridge stopped checking in.";
+  }
+
   if (state.taskDetail) {
     return describeRunner(state.taskDetail);
+  }
+
+  if (runner?.last_heartbeat_at) {
+    return `Last heartbeat ${formatTime(runner.last_heartbeat_at)}.`;
   }
 
   if (runner?.last_seen_at) {
@@ -2201,6 +2425,10 @@ const runnerStatusDetail = (): string => {
 };
 
 const runnerTone = (): UiTone => {
+  if (state.overview?.runner.bridge_offline) {
+    return "danger";
+  }
+
   if (
     state.tasks.some(
       (task) => task.status === "running" && task.execution_target === "runner"
@@ -2497,6 +2725,12 @@ window.addEventListener("error", (event) => {
 
 window.addEventListener("unhandledrejection", (event) => {
   renderFatalBootError(event.reason);
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (pollingActive) {
+    scheduleNextRefresh(document.hidden ? 30_000 : 500);
+  }
 });
 
 boot();

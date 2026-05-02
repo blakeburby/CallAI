@@ -157,6 +157,7 @@ code,
 .command-bar,
 .system-pill,
 .attention-strip,
+.jarvis-state-panel,
 .quick-strip {
   border: 1px solid rgba(171, 190, 198, 0.16);
   border-radius: 8px;
@@ -288,6 +289,7 @@ code,
 
 .notice,
 .attention-strip,
+.jarvis-state-panel,
 .quick-strip,
 .system-strip,
 .mission-grid {
@@ -296,6 +298,55 @@ code,
 
 .notice {
   padding: 12px 14px;
+}
+
+.jarvis-state-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.2fr) minmax(320px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  padding: 16px;
+}
+
+.jarvis-state-panel h2 {
+  margin: 3px 0 6px;
+}
+
+.jarvis-state-panel p {
+  margin: 0;
+  color: #a9bac2;
+}
+
+.jarvis-state-panel dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.jarvis-state-panel dt {
+  color: #8ea0a8;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.jarvis-state-panel dd {
+  margin: 3px 0 0;
+  color: #f1f7f9;
+  overflow-wrap: anywhere;
+}
+
+.jarvis-state-panel.ok {
+  border-color: rgba(102, 224, 163, 0.34);
+}
+
+.jarvis-state-panel.warn,
+.jarvis-state-panel.active {
+  border-color: rgba(245, 196, 92, 0.36);
+}
+
+.jarvis-state-panel.danger {
+  border-color: rgba(255, 112, 112, 0.4);
 }
 
 .quick-strip {
@@ -946,17 +997,55 @@ pre {
 
 .chat-task-card {
   display: grid;
-  gap: 5px;
+  gap: 8px;
   width: 100%;
-  min-height: 72px;
+  margin-top: 8px;
+  padding: 10px;
   text-align: left;
   background: rgba(102, 224, 163, 0.1);
   border-color: rgba(102, 224, 163, 0.44);
 }
 
-.chat-task-card small {
+.chat-task-select {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.chat-task-select strong {
+  color: #f5fbfd;
+}
+
+.chat-task-select small,
+.chat-task-select em,
+.chat-task-select p,
+.task-card-note,
+.task-card-warning {
   color: #9fb0b8;
   font-size: 0.75rem;
+}
+
+.chat-task-select p {
+  margin: 0;
+}
+
+.task-card-warning {
+  color: #f5c45c;
+}
+
+.chat-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.chat-task-actions button {
+  min-height: 30px;
+  padding: 0 10px;
 }
 
 .chat-form {
@@ -1046,6 +1135,7 @@ pre {
   .mission-grid,
   .chat-layout,
   .sms-health-layout,
+  .jarvis-state-panel,
   .operator-sections {
     grid-template-columns: minmax(300px, 0.8fr) minmax(420px, 1fr);
   }
@@ -1103,8 +1193,10 @@ pre {
   .outbound-form,
   .login-row,
   .detail-grid,
-  .backend-config-grid,
-  .backend-lower-grid,
+	  .backend-config-grid,
+	  .jarvis-state-panel,
+	  .jarvis-state-panel dl,
+	  .backend-lower-grid,
   .sms-summary-grid,
   .preview-meta,
   .audit-row,

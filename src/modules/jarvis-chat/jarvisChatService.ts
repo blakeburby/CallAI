@@ -78,24 +78,29 @@ const jarvisIntentSchema = z.discriminatedUnion("kind", [
       taskId: z.string().min(1).max(80).optional(),
       reason: z.string().min(1).max(1000).optional()
     })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("retry_latest_task")
+    })
     .strict()
 ]);
 
 type JarvisIntent = z.infer<typeof jarvisIntentSchema>;
 
 const FALLBACK_REPLY =
-  "I'm here. Talk normally, ask for status, or start a real command with task. That last word is the clutch so I don't accidentally start moving your Mac around because you were thinking out loud.";
+  "I'm here. Normal conversation stays conversation. When you want me to move the system, start with task and I'll treat it like real work.";
 const CODEX_CASUAL_RECEIPT = "Got it. Thinking for a second.";
 const HELP_REPLY =
-  "I can chat through Telegram, SMS, and the website; check status; handle approvals; and use the Mac bridge for Chrome, Finder, apps, screenshots, and safe shell commands. To queue work, start with task. Risky moves still stop for approval.";
+  "I can chat through Telegram, SMS, and the website, check status, handle approvals, and use the Mac bridge for Chrome, Finder, apps, screenshots, and safe shell commands. Say task before executable work. Risky moves still stop at the gate.";
 const START_REPLY =
-  "Back online. Send hello, status, or start with task when you want me to actually do work.";
+  "Back online. Talk normally, ask status, or say task when you want me to do the thing.";
 const STOP_REPLY =
   "Jarvis chat is paused for this channel. Send START to resume.";
 const OPTED_OUT_REPLY =
   "Jarvis chat is paused for this channel. Send START to resume.";
 const GREETING_REPLY =
-  "Here. Jarvis online. Chat normally; say task when you want me to touch the queue. Keeps the cockpit from turning every stray thought into a launch sequence.";
+  "Here. Jarvis online. I can chat cleanly now; say task when you want me to actually touch the queue.";
 const IDENTITY_REPLY =
   "I'm Jarvis, Blake's engineering intelligence for CallAI, repo work, status checks, approvals, and Mac local-bridge operations. Calm mission control, slightly more caffeinated than the dashboard.";
 const COMPUTER_CONTROL_REPLY =
@@ -314,6 +319,22 @@ const routeMessage = async (input: {
     return { intent: "chat_reply", reply: OPTED_OUT_REPLY };
   }
 
+  if (isLatestWorkQuestion(input.body)) {
+    return { intent: "chat_reply", reply: await latestWorkReply() };
+  }
+
+  if (isCurrentWorkQuestion(input.body)) {
+    return statusReply();
+  }
+
+  if (isLatestScreenshotRequest(input.body)) {
+    return { intent: "chat_reply", reply: await latestScreenshotReply() };
+  }
+
+  if (isRetryThatRequest(input.body)) {
+    return retryLatestReply();
+  }
+
   const history = await database.listChatMessages({ limit: 12 });
   const deterministicReply = isCommandLikeMessage(input.body)
     ? null
@@ -380,6 +401,8 @@ const dispatchIntent = async (
       return continueReply(intent.taskId, intent.instructions);
     case "cancel_task":
       return cancelReply(intent.taskId, intent.reason);
+    case "retry_latest_task":
+      return retryLatestReply();
   }
 };
 
@@ -576,22 +599,47 @@ const hydrateMessages = async (
       ...message,
       channel_kind: channel?.kind ?? "web",
       channel_display_name: channel?.display_name ?? "Jarvis",
-      ...(task
-        ? {
-            task: {
-              id: task.id,
-              title: task.title,
-              status: task.status,
-              normalized_action: task.normalized_action,
-              execution_target: task.execution_target,
-              updated_at: task.updated_at
-            }
-          }
-        : {})
+      ...(task ? { task: await hydrateTaskCard(task) } : {})
     });
   }
 
   return hydrated;
+};
+
+const hydrateTaskCard = async (task: DeveloperTaskRecord): Promise<
+  NonNullable<JarvisChatMessageView["task"]>
+> => {
+  const [events, runs, confirmation, snapshot] = await Promise.all([
+    auditLog.forTask(task.id, 1),
+    database.listExecutionRuns(task.id),
+    database.getPendingConfirmationForTask(task.id),
+    database.getDesktopSnapshot(task.id)
+  ]);
+  const latestRunSummary =
+    runs.find((run) => Boolean(run.final_summary))?.final_summary ?? null;
+  const latestEvent = events[0] ?? null;
+  const eventLabel = latestEvent
+    ? stringField(latestEvent.payload.latest_action_label) ??
+      stringField(latestEvent.payload.summary) ??
+      formatLabel(latestEvent.event_type)
+    : null;
+
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    normalized_action: task.normalized_action,
+    execution_target: task.execution_target,
+    permission_required: task.permission_required,
+    updated_at: task.updated_at,
+    latest_event_at: latestEvent?.created_at ?? null,
+    latest_event_label: eventLabel,
+    latest_event_type: latestEvent?.event_type ?? null,
+    latest_summary: latestRunSummary,
+    pending_confirmation_id: confirmation?.id ?? null,
+    pending_confirmation_risk: confirmation?.risk ?? null,
+    has_desktop_snapshot: Boolean(snapshot?.screenshot_data_url || snapshot?.latest_action)
+  };
 };
 
 const channelForMessage = async (
@@ -632,7 +680,7 @@ const resolveTask = async (
 
   if (ref) {
     return (
-      tasks.find((task) => task.id.toLowerCase().endsWith(ref)) ??
+      tasks.find((task) => normalizeRef(task.id).endsWith(ref)) ??
       tasks.find((task) => task.title.toLowerCase().includes(ref)) ??
       null
     );
@@ -660,8 +708,8 @@ const resolveConfirmation = async (
   if (ref) {
     const match = confirmations.find(
       (confirmation) =>
-        confirmation.id.toLowerCase().endsWith(ref) ||
-        confirmation.task_id.toLowerCase().endsWith(ref)
+        normalizeRef(confirmation.id).endsWith(ref) ||
+        normalizeRef(confirmation.task_id).endsWith(ref)
     );
 
     return match ? { kind: "found", record: match } : { kind: "none" };
@@ -706,6 +754,10 @@ const isCommandLikeMessage = (body: string): boolean => {
     /^\s*(yes|approve|approved|go ahead|proceed)\b/.test(lower) ||
     /^\s*(no|deny|denied|do not)\b/.test(lower) ||
     /\b(status|what'?s running|progress|finished|done yet)\b/.test(lower) ||
+    isLatestWorkQuestion(body) ||
+    isCurrentWorkQuestion(body) ||
+    isLatestScreenshotRequest(body) ||
+    isRetryThatRequest(body) ||
     /\b(continue|resume|keep going|try again)\b/.test(lower) ||
     /\b(cancel|stop task|kill task)\b/.test(lower)
   );
@@ -776,7 +828,7 @@ const deterministicChatReply = (body: string): string | null => {
 const fallbackCasualReply = async (body: string): Promise<string> => {
   const lower = body.trim().toLowerCase();
 
-  if (/\b(what did you do|what'd you do|did you actually|what happened|what changed)\b/.test(lower)) {
+  if (isLatestWorkQuestion(lower)) {
     return latestWorkReply();
   }
 
@@ -785,6 +837,32 @@ const fallbackCasualReply = async (body: string): Promise<string> => {
   }
 
   return FALLBACK_REPLY;
+};
+
+const isLatestWorkQuestion = (body: string): boolean => {
+  const lower = body.trim().toLowerCase();
+  return /\b(what happened|what did you do|what'd you do|did you actually|what changed|latest work|last thing)\b/.test(
+    lower
+  );
+};
+
+const isCurrentWorkQuestion = (body: string): boolean => {
+  const lower = body.trim().toLowerCase();
+  return /\b(what are you doing|what'?re you doing|what is jarvis doing|what are you working on|are you working)\b/.test(
+    lower
+  );
+};
+
+const isLatestScreenshotRequest = (body: string): boolean => {
+  const lower = body.trim().toLowerCase();
+  return /\b(show|send|latest|last)\b.*\b(screen ?shot|desktop preview|screen)\b/.test(
+    lower
+  );
+};
+
+const isRetryThatRequest = (body: string): boolean => {
+  const lower = body.trim().toLowerCase();
+  return /^\s*(retry that|try that again|rerun that|run that again)\b/.test(lower);
 };
 
 const latestWorkReply = async (): Promise<string> => {
@@ -818,6 +896,88 @@ const latestWorkReply = async (): Promise<string> => {
   }
 
   return `Latest task ${latest.id.slice(-6)} is ${formatLabel(latest.status)}: ${latest.title}.${summary}`;
+};
+
+const latestScreenshotReply = async (): Promise<string> => {
+  const tasks = await taskService.listTasks();
+
+  for (const task of tasks) {
+    const snapshot = await database.getDesktopSnapshot(task.id);
+
+    if (!snapshot) {
+      continue;
+    }
+
+    const label =
+      snapshot.latest_action ??
+      snapshot.page_title ??
+      snapshot.current_url ??
+      "desktop state captured";
+    const screenshotStatus = snapshot.screenshot_data_url
+      ? "A screenshot is available in the Website Chat task card."
+      : "I have state but no image payload for that task yet.";
+
+    return `Latest desktop state is task ${task.id.slice(-6)}: ${task.title}. ${label}. ${screenshotStatus}`;
+  }
+
+  return "I do not have a desktop screenshot yet. Run a Mac/Chrome task and I'll pin the latest state to the dashboard.";
+};
+
+const retryLatestReply = async (): Promise<{
+  intent: "continue_task" | "chat_reply";
+  reply: string;
+  taskId?: string;
+}> => {
+  const tasks = await taskService.listTasks();
+  const task =
+    tasks.find((item) => ["failed", "blocked"].includes(item.status)) ??
+    tasks.find((item) => item.status === "cancelled") ??
+    null;
+
+  if (!task) {
+    return {
+      intent: "chat_reply",
+      reply:
+        "I do not see a failed, blocked, or cancelled task to retry. Give me the task id and I'll aim at the right one."
+    };
+  }
+
+  if (task.status === "cancelled" && !canSafelyRequeueCancelledTask(task)) {
+    return {
+      intent: "chat_reply",
+      taskId: task.id,
+      reply: `Task ${task.id.slice(-6)} was cancelled behind an approval gate. I will not quietly revive that one; send approve or start a fresh task with the exact instruction.`
+    };
+  }
+
+  if (task.status === "cancelled") {
+    const queued = await database.updateTask(task.id, { status: "queued" });
+    await auditLog.log({
+      task_id: task.id,
+      event_type: "task.retry_requested",
+      payload: {
+        previous_status: "cancelled",
+        source: "jarvis_chat"
+      }
+    });
+
+    return {
+      intent: "continue_task",
+      taskId: queued.id,
+      reply: `I requeued task ${queued.id.slice(-6)}: ${queued.title}. Let's take another swing.`
+    };
+  }
+
+  return continueReply(task.id, "Retry requested from Jarvis chat.");
+};
+
+const canSafelyRequeueCancelledTask = (task: DeveloperTaskRecord): boolean => {
+  if (task.permission_required !== "read_only" && task.permission_required !== "safe_write") {
+    return false;
+  }
+
+  return task.structured_request.riskLevel !== "needs_confirmation" &&
+    task.structured_request.riskLevel !== "blocked";
 };
 
 const nextTaskHint = (status: TaskStatusResult): string => {
@@ -865,6 +1025,10 @@ const heuristicIntent = (body: string): JarvisIntent => {
 
   if (/\b(status|what'?s running|progress|finished|done yet)\b/.test(lower)) {
     return { kind: "get_task_status", ...(ref ? { taskId: ref } : {}) };
+  }
+
+  if (isRetryThatRequest(trimmed)) {
+    return { kind: "retry_latest_task" };
   }
 
   if (/\b(continue|resume|keep going|try again)\b/.test(lower)) {
@@ -929,6 +1093,9 @@ const normalizeRef = (value: string | undefined): string => {
 };
 
 const formatLabel = (value: string): string => value.replaceAll("_", " ");
+
+const stringField = (value: unknown): string | null =>
+  typeof value === "string" && value.trim().length > 0 ? value : null;
 
 const sanitizeReply = (value: string): string => {
   const redacted = value

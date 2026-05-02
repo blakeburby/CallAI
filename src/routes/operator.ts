@@ -14,7 +14,8 @@ import type {
   AuditEventRecord,
   CodexThreadJobRecord,
   ConfirmationRequestRecord,
-  DeveloperTaskRecord
+  DeveloperTaskRecord,
+  JarvisChatReplyJobRecord
 } from "../types/operator.js";
 
 const createTaskSchema = z.object({
@@ -51,13 +52,14 @@ operatorRouter.use("/operator", requireFrontendSession);
 
 operatorRouter.get("/operator/overview", async (_request, response, next) => {
   try {
-    const [tasks, confirmations, events, databaseHealth, smsHealth] =
+    const [tasks, confirmations, events, databaseHealth, smsHealth, replyJobs] =
       await Promise.all([
         database.listTasks(50),
         database.listPendingConfirmations(50),
         database.listAuditEvents({ limit: 80 }),
         checkDatabaseConnection(),
-        smsService.getHealth()
+        smsService.getHealth(),
+        database.listJarvisChatReplyJobs()
       ]);
     const codexThreadJobs = (
       await Promise.all(
@@ -67,17 +69,31 @@ operatorRouter.get("/operator/overview", async (_request, response, next) => {
       )
     ).filter((job): job is CodexThreadJobRecord => Boolean(job));
 
+    const runner = summarizeRunner(events, tasks);
+    const codexThread = summarizeCodexThread(events, tasks, codexThreadJobs);
+    const chatReplyQueue = summarizeChatReplyQueue(replyJobs);
+    const jarvisState = summarizeJarvisState({
+      chatReplyQueue,
+      codexThread,
+      confirmations,
+      databaseHealth,
+      runner,
+      tasks
+    });
+
     response.json({
       success: true,
       data: {
         tasks,
         confirmations,
         counts: buildTaskCounts(tasks, confirmations),
-        runner: summarizeRunner(events, tasks),
-        codex_thread: summarizeCodexThread(events, tasks, codexThreadJobs),
+        jarvis_state: jarvisState,
+        runner,
+        codex_thread: codexThread,
+        chat_reply_queue: chatReplyQueue,
         sms: smsHealth.summary,
         database: databaseHealth,
-        last_activity_at: latestActivityAt(tasks, confirmations, events)
+        last_activity_at: latestActivityAt(tasks, confirmations, events, replyJobs)
       }
     });
   } catch (error) {
@@ -375,14 +391,51 @@ function summarizeRunner(
   tasks: DeveloperTaskRecord[]
 ): Record<string, unknown> {
   const runnerEvent = events.find((event) => event.event_type.startsWith("runner."));
-  const running = tasks.find((task) => task.status === "running");
+  const lastCheckInEvent =
+    events.find((event) =>
+      ["runner.heartbeat", "runner.preflight", "runner.started", "runner.claimed_task"].includes(
+        event.event_type
+      )
+    ) ?? runnerEvent;
+  const running = tasks.find(
+    (task) => task.status === "running" && task.execution_target === "runner"
+  );
+  const queuedRunnerTasks = tasks.filter(
+    (task) => task.status === "queued" && task.execution_target === "runner"
+  );
+  const heartbeatAgeMs = lastCheckInEvent
+    ? Date.now() - new Date(lastCheckInEvent.created_at).getTime()
+    : null;
+  const staleAfterMs = Number(
+    process.env.RUNNER_HEARTBEAT_STALE_AFTER_MS ?? 3 * 60 * 1000
+  );
+  const stopped = runnerEvent?.event_type === "runner.stopped";
+  const bridgeOffline =
+    stopped ||
+    (Boolean(lastCheckInEvent) && Boolean(heartbeatAgeMs && heartbeatAgeMs > staleAfterMs)) ||
+    (!lastCheckInEvent && (queuedRunnerTasks.length > 0 || Boolean(running)));
 
   return {
-    status: running ? "active" : runnerEvent ? "seen" : "unknown",
-    runner_id: stringField(runnerEvent?.payload.runner_id),
-    task_scope: stringField(runnerEvent?.payload.task_scope),
+    status: bridgeOffline
+      ? "offline"
+      : running
+        ? "active"
+        : runnerEvent
+          ? "seen"
+          : "unknown",
+    runner_id:
+      stringField(lastCheckInEvent?.payload.runner_id) ??
+      stringField(runnerEvent?.payload.runner_id),
+    task_scope:
+      stringField(lastCheckInEvent?.payload.task_scope) ??
+      stringField(runnerEvent?.payload.task_scope),
     last_event_type: runnerEvent?.event_type ?? null,
     last_seen_at: runnerEvent?.created_at ?? null,
+    last_heartbeat_at: lastCheckInEvent?.created_at ?? null,
+    heartbeat_age_ms: heartbeatAgeMs,
+    heartbeat_stale_after_ms: staleAfterMs,
+    bridge_offline: bridgeOffline,
+    queued_runner_count: queuedRunnerTasks.length,
     active_task_id: running?.id ?? null,
     active_task_title: running?.title ?? null
   };
@@ -391,16 +444,167 @@ function summarizeRunner(
 function latestActivityAt(
   tasks: DeveloperTaskRecord[],
   confirmations: ConfirmationRequestRecord[],
-  events: AuditEventRecord[]
+  events: AuditEventRecord[],
+  replyJobs: JarvisChatReplyJobRecord[] = []
 ): string | null {
   return [
     ...tasks.map((task) => task.updated_at),
     ...confirmations.map((confirmation) => confirmation.expires_at),
-    ...events.map((event) => event.created_at)
+    ...events.map((event) => event.created_at),
+    ...replyJobs.map((job) => job.updated_at)
   ]
     .filter(Boolean)
     .sort()
     .at(-1) ?? null;
+}
+
+function summarizeChatReplyQueue(
+  jobs: JarvisChatReplyJobRecord[]
+): Record<string, unknown> {
+  const queued = jobs.filter((job) => job.status === "queued");
+  const running = jobs.filter((job) => job.status === "running");
+  const failures = jobs.filter((job) => job.status === "failed" || job.status === "expired");
+  const active = running[0] ?? queued[0] ?? null;
+  const latestFailure = failures[0] ?? null;
+  const now = Date.now();
+  const overdue = [...queued, ...running]
+    .filter((job) => Date.parse(job.expires_at) < now)
+    .sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at))[0];
+
+  return {
+    queued_count: queued.length,
+    running_count: running.length,
+    failed_recent_count: failures.length,
+    active_job_id: active?.id ?? null,
+    active_worker_id: active?.worker_id ?? null,
+    oldest_queued_at: queued.at(-1)?.created_at ?? null,
+    latest_failure_reason: latestFailure?.error ?? null,
+    latest_failure_at: latestFailure?.completed_at ?? latestFailure?.updated_at ?? null,
+    latest_failure_worker_id: latestFailure?.worker_id ?? null,
+    timeout_age_ms: overdue ? now - Date.parse(overdue.expires_at) : null
+  };
+}
+
+function summarizeJarvisState(input: {
+  chatReplyQueue: Record<string, unknown>;
+  codexThread: Record<string, unknown>;
+  confirmations: ConfirmationRequestRecord[];
+  databaseHealth: Awaited<ReturnType<typeof checkDatabaseConnection>>;
+  runner: Record<string, unknown>;
+  tasks: DeveloperTaskRecord[];
+}): Record<string, unknown> {
+  const attentionTask =
+    input.tasks.find((task) => task.status === "running") ??
+    input.tasks.find((task) => task.status === "needs_confirmation") ??
+    input.tasks.find((task) => task.status === "queued") ??
+    input.tasks.find((task) => ["failed", "blocked"].includes(task.status)) ??
+    null;
+  const replyActive =
+    Number(input.chatReplyQueue.running_count ?? 0) > 0 ||
+    Number(input.chatReplyQueue.queued_count ?? 0) > 0;
+
+  if (!input.databaseHealth.ok) {
+    return jarvisState("degraded", "Jarvis is degraded", input.databaseHealth.message, attentionTask, true);
+  }
+
+  if (input.confirmations.length > 0) {
+    const task =
+      input.tasks.find((item) => item.id === input.confirmations[0]?.task_id) ??
+      attentionTask;
+    return jarvisState(
+      "waiting_for_approval",
+      "Approval needed",
+      `${input.confirmations.length} action${input.confirmations.length === 1 ? "" : "s"} waiting on you.`,
+      task,
+      true
+    );
+  }
+
+  if (input.runner.bridge_offline && Number(input.runner.queued_runner_count ?? 0) > 0) {
+    return jarvisState(
+      "bridge_offline",
+      "Mac bridge needs attention",
+      "Runner work is queued, but the last bridge heartbeat is stale or missing.",
+      attentionTask,
+      true
+    );
+  }
+
+  if (input.codexThread.stale) {
+    return jarvisState(
+      "stuck",
+      "A Codex-thread task looks stale",
+      "Manual bridge work has waited longer than the configured stale threshold.",
+      attentionTask,
+      true
+    );
+  }
+
+  if (input.tasks.some((task) => task.status === "running")) {
+    return jarvisState(
+      "working",
+      "Jarvis is working",
+      attentionTask?.title ?? "A task is running now.",
+      attentionTask,
+      false
+    );
+  }
+
+  if (replyActive) {
+    return jarvisState(
+      "thinking",
+      "Jarvis is thinking",
+      "A Codex-backed chat reply is queued or running.",
+      attentionTask,
+      false
+    );
+  }
+
+  if (Number(input.chatReplyQueue.failed_recent_count ?? 0) > 0) {
+    return jarvisState(
+      "degraded",
+      "Chat replies need a look",
+      stringField(input.chatReplyQueue.latest_failure_reason) ??
+        "A recent Codex-backed casual reply failed.",
+      attentionTask,
+      true
+    );
+  }
+
+  if (input.tasks.some((task) => task.status === "queued")) {
+    return jarvisState(
+      "working",
+      "Work is queued",
+      attentionTask?.title ?? "A task is waiting for the right executor.",
+      attentionTask,
+      false
+    );
+  }
+
+  return jarvisState(
+    "online",
+    "Jarvis is online",
+    "Chat, approvals, repo work, and Mac bridge routing are standing by.",
+    attentionTask,
+    false
+  );
+}
+
+function jarvisState(
+  state: string,
+  headline: string,
+  detail: string,
+  task: DeveloperTaskRecord | null,
+  needsAttention: boolean
+): Record<string, unknown> {
+  return {
+    state,
+    headline,
+    detail,
+    active_task_id: task?.id ?? null,
+    active_task_title: task?.title ?? null,
+    needs_attention: needsAttention
+  };
 }
 
 function stringField(value: unknown): string | null {
