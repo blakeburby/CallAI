@@ -510,6 +510,11 @@ function summarizeJarvisState(input: {
     input.tasks.find((task) => task.status === "queued") ??
     input.tasks.find((task) => ["failed", "blocked"].includes(task.status)) ??
     null;
+  const recentStuckTask = input.tasks.find(
+    (task) =>
+      ["failed", "blocked"].includes(task.status) &&
+      Date.now() - new Date(task.updated_at).getTime() <= 30 * 60 * 1000
+  );
   const replyActive =
     Number(input.chatReplyQueue.running_count ?? 0) > 0 ||
     Number(input.chatReplyQueue.queued_count ?? 0) > 0;
@@ -582,6 +587,16 @@ function summarizeJarvisState(input: {
     );
   }
 
+  if (recentStuckTask) {
+    return jarvisState(
+      "stuck",
+      "Latest task needs a look",
+      `${recentStuckTask.title} is ${recentStuckTask.status}.`,
+      recentStuckTask,
+      true
+    );
+  }
+
   if (input.tasks.some((task) => task.status === "queued")) {
     return jarvisState(
       "working",
@@ -596,7 +611,7 @@ function summarizeJarvisState(input: {
     "online",
     "Jarvis is online",
     "Chat, approvals, repo work, and Mac bridge routing are standing by.",
-    attentionTask,
+    null,
     false
   );
 }
